@@ -16,6 +16,9 @@
     "password": {
       "type": "password"
     },
+    "pin_code": {
+      "type": "password"
+    },
     "advancedFields": {
       "folderPath": {
         "advanced": true,
