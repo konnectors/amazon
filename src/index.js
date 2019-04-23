@@ -59,7 +59,7 @@ class AmazonKonnector extends CookieKonnector {
     let last$ = null
     if (fields.code) {
       log('info', 'Found a code')
-      return this.sendVerifyCode(fields.pin_code)
+      return this.sendVerifyCode(fields.code)
     }
 
     // this may not be needed
