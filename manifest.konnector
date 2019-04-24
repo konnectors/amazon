@@ -16,7 +16,7 @@
     "password": {
       "type": "password"
     },
-    "code": {
+    "pin_code": {
       "type": "password"
     },
     "advancedFields": {
