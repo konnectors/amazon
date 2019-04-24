@@ -72,7 +72,7 @@ class AmazonKonnector extends CookieKonnector {
   async authenticate(fields) {
     log('info', 'Authenticating ...')
     let last$ = null
-    if (fields.pin_code) {
+    if (fields.pin_code && fields.pin_code.length > 1) {
       log('info', 'Found a code')
       return this.sendVerifyCode(fields.pin_code)
     }
