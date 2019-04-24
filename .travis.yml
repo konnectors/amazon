@@ -1,0 +1,42 @@
+language: node_js
+node_js:
+- '8'
+env:
+  global:
+  - DEPLOY_REPOSITORY="git@github.com:konnectors/amazon.git"
+  - secure: OFLVF7kKsIdSzAkG887hUWnSbLBd1TMgvKREASP4KNy5YOmMzKOuxS89kds6IIixuGT1ruIk+U6+jCTeNBjPgVme0bKiNx+ijQaR+MwdZw2PRRQskmtO2QH/9hvDGwHZogU2YBv04MHUDbVOUy6R8pPre81r57PfQZ9edCINtGa5L7XQEyhj4BGEg/yQunkFMI7csJi5HgBOt09vzobKBLwZWb1hWtue+46haWvXKcFSc9y86L2OYODIwD5bTSCetC0DpfmIHOlp89k4Km6eP6RJzp4o5CdGTfbuNikDpLGf9+UbksSDP42IlkxdeyKITuAP2U5EF5oiH9P7WZUCQFXPosYMhbIu/fT3A8vxbZO+EmRqnSUYNeh1HEw8o5oMXXBeXSpTKxKCe5iwGQTRjB4E93J+WOSlov6DPfTJQpxSJojSketPkogvlgIbu970/iHZuOCtN3uBMbXgtqwzZXx+CvXN9E+LpHNtK8qwBD1jNtnD7dnEaB798JwNVvTgd7O3Nag45nFR4I2Mg9zIUDMi0PPLCXlQYcHvla8F5h2BxUDvPlcgiKmUqTq/buQbh4PsRp3Kl29oHN0aOP3rVM4IGIQ3E2KegiPbB/ndw2X8HeN2fzT38/tqPo2CDeCpxUqhZZb9vdzXCWtl5BVJYo70khdR4EDQfgTGPNWK1Os=
+cache:
+  yarn: true
+  directories:
+  - node_modules
+branches:
+  except:
+  - build
+  - build-debug
+script:
+- echo 'Linting' && echo -en 'travis_fold:start:lint\\r'
+- yarn lint
+- echo -en 'travis_fold:end:lint\\r'
+- echo 'Building' && echo -en 'travis_fold:start:build\\r'
+- yarn build
+- echo -en 'travis_fold:end:build\\r'
+deploy:
+- provider: script
+  skip-cleanup: true
+  script: DEPLOY_BRANCH=build yarn deploy && yarn cozyPublish
+  on:
+    branch: master
+- provider: script
+  skip-cleanup: true
+  script: DEPLOY_BRANCH=build yarn deploy && yarn cozyPublish
+  on:
+    tags: true
+before_install:
+- openssl aes-256-cbc -K $encrypted_81655c776d09_key -iv $encrypted_81655c776d09_iv
+  -in github_deploy_key.enc -out /tmp/github_deploy_key -d
+- eval "$(ssh-agent -s)"
+- chmod 600 /tmp/github_deploy_key
+- ssh-add /tmp/github_deploy_key
+after_deploy:
+- rm /tmp/github_deploy_key
+- ssh-add -D
