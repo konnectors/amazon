@@ -1,29 +1,44 @@
-const { CookieKonnector, log, errors } = require('cozy-konnector-libs')
+const { CookieKonnector, log, errors, utils } = require('cozy-konnector-libs')
+const bluebird = require('bluebird')
 
+const { parseCommands, extractBillDetails } = require('./scraping')
 const baseUrl = 'https://www.amazon.fr'
 const orderUrl = `${baseUrl}/gp/your-account/order-history?ref_=ya_d_c_yo`
 
 class AmazonKonnector extends CookieKonnector {
   async fetch(fields) {
-    let $ = await this.testSession()
-    if (!$) {
-      $ = await this.authenticate(fields)
+    if (!(await this.testSession())) {
+      await this.authenticate(fields)
     }
 
-    log('info', 'saving order history')
-    await this.saveFiles(
-      [
-        {
-          filename: 'order_history.html',
-          fileurl: orderUrl,
-          requestOptions: {
-            gzip: true
-          }
-        }
-      ],
-      fields
+    log('info', 'Fetching the list of orders')
+    const $ = await this.request(orderUrl)
+
+    log('info', 'Fetching details for each order')
+    const bills = await bluebird.map(parseCommands($), bill =>
+      this.fetchBillDetails(bill)
     )
-    await this.saveSession()
+
+    log('info', 'Saving bills')
+    await this.saveBills(bills, fields, {
+      identifiers: 'amazon',
+      keys: ['vendorRef']
+    })
+  }
+
+  async fetchBillDetails(bill) {
+    const $ = await this.request(baseUrl + bill.detailsUrl)
+    const { amount, date, vendorRef, currency } = bill
+    return {
+      amount,
+      date,
+      vendorRef,
+      currency,
+      ...extractBillDetails($('ul')),
+      filename: `${utils.formatDate(date)}_amazon_${amount.toFixed(
+        2
+      )}${currency}${vendorRef}.pdf`
+    }
   }
 
   async testSession() {
