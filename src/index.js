@@ -1,4 +1,10 @@
-const { CookieKonnector, log, errors, utils } = require('cozy-konnector-libs')
+const {
+  CookieKonnector,
+  log,
+  errors,
+  utils,
+  solveCaptcha
+} = require('cozy-konnector-libs')
 const bluebird = require('bluebird')
 
 const { parseCommands, extractBillDetails } = require('./scraping')
@@ -130,22 +136,46 @@ class AmazonKonnector extends CookieKonnector {
         log('info', 'captcha url')
         const fileurl = last$('#auth-captcha-image').attr('src')
         log('info', fileurl)
-        await this.saveFiles(
-          [{ fileurl, filename: `captcha_${new Date().toJSON()}.jpg` }],
-          fields
+
+        const imageRequest = this.requestFactory({
+          cheerio: false,
+          json: false
+        })
+        const body = await imageRequest(fileurl, { encoding: 'base64' })
+
+        const captchaResponse = await solveCaptcha({
+          type: 'image',
+          body
+        })
+
+        await this.submitForm(
+          last$,
+          'form[name=signIn]',
+          {
+            guess: captchaResponse,
+            password: fields.password,
+            'claim-autofile-hint': fields.email
+          },
+          { referer: `${baseUrl}/ap/signin` }
         )
+        if (!(await this.testSession())) {
+          log('error', 'Session after captcha resolution is not valid')
+          throw new Error(errors.LOGIN_FAILED)
+        }
+        return this.saveSession()
       }
 
       throw err
     }
   }
 
-  submitForm($, formSelector, values = {}) {
+  submitForm($, formSelector, values = {}, headers = {}) {
     const $form = $(formSelector)
     const inputs = this.getFormData($form)
-    return this.request(`${baseUrl}/ap/cvf/verify`, {
+    return this.request($form.attr('action'), {
       method: $form.attr('method'),
-      form: { ...inputs, ...values }
+      form: { ...inputs, ...values },
+      headers
     })
   }
 
@@ -163,7 +193,7 @@ const connector = new AmazonKonnector({
   // debug: content => {
   //   debugOutput.push(content)
   // },
-  // debug: 'simple',
+  // debug: 'json',
   cheerio: true,
   json: false,
   headers: {
