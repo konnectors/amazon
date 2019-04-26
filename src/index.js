@@ -19,9 +19,21 @@ class AmazonKonnector extends CookieKonnector {
 
     log('info', 'Fetching the list of orders')
     const $ = await this.request(orderUrl)
+    let commands = parseCommands($)
+
+    // is there a pager ?
+    const $morePages = $('.a-pagination .a-normal')
+    for (const page of Array.from($morePages)) {
+      const url = $(page)
+        .find('a')
+        .attr('href')
+      commands = commands.concat(
+        parseCommands(await this.request(baseUrl + url))
+      )
+    }
 
     log('info', 'Fetching details for each order')
-    const bills = await bluebird.map(parseCommands($), bill =>
+    const bills = await bluebird.map(commands, bill =>
       this.fetchBillDetails(bill)
     )
 
