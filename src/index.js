@@ -138,7 +138,10 @@ class AmazonKonnector extends CookieKonnector {
         log('info', 'Sending the mail...')
         const $codeForm = await this.submitForm(
           last$,
-          'form[name=claimspicker]'
+          'form[name=claimspicker]',
+          null,
+          null,
+          `${baseUrl}/ap/cvf/verify`
         )
 
         const formData = this.getFormData($codeForm('form.fwcim-form'))
@@ -185,10 +188,11 @@ class AmazonKonnector extends CookieKonnector {
     }
   }
 
-  submitForm($, formSelector, values = {}, headers = {}) {
+  submitForm($, formSelector, values = {}, headers = {}, action) {
     const $form = $(formSelector)
     const inputs = this.getFormData($form)
-    return this.request($form.attr('action'), {
+    if (!action) action = $form.attr('action')
+    return this.request(action, {
       method: $form.attr('method'),
       form: { ...inputs, ...values },
       headers
