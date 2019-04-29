@@ -71,8 +71,8 @@ class AmazonKonnector extends CookieKonnector {
     return false
   }
 
-  async sendVerifyCode(code) {
-    const formData = { ...this.getAccountData().codeFormData, code }
+  async sendVerifyCode(code, formData) {
+    if (!formData) formData = { ...this.getAccountData().codeFormData, code }
     const $ = await this.request.post(`${baseUrl}/ap/cvf/verify`, {
       form: formData
     })
@@ -142,6 +142,10 @@ class AmazonKonnector extends CookieKonnector {
         )
 
         const formData = this.getFormData($codeForm('form.fwcim-form'))
+        // FIXME should run only if not in standalone mode
+        // this detection could be in basekonnector too
+        const code = await this.waitForTwoFaCode()
+        await this.sendVerifyCode(code)
         await this.saveAccountData({ codeFormData: formData })
         await this.saveSession()
       } else if (err.message === errors.CHALLENGE_ASKED + '.CAPTCHA') {
