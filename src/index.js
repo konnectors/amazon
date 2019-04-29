@@ -145,12 +145,14 @@ class AmazonKonnector extends CookieKonnector {
         )
 
         const formData = this.getFormData($codeForm('form.fwcim-form'))
-        // FIXME should run only if not in standalone mode
-        // this detection could be in basekonnector too
-        const code = await this.waitForTwoFaCode()
-        await this.sendVerifyCode(code)
-        await this.saveAccountData({ codeFormData: formData })
-        await this.saveSession()
+        if (process.env.NODE_ENV === 'standalone') {
+          await this.saveAccountData({ codeFormData: formData })
+          await this.saveSession()
+          throw err
+        } else {
+          const code = await this.waitForTwoFaCode()
+          await this.sendVerifyCode(code)
+        }
       } else if (err.message === errors.CHALLENGE_ASKED + '.CAPTCHA') {
         log('info', 'captcha url')
         const fileurl = last$('#auth-captcha-image').attr('src')
