@@ -1,5 +1,5 @@
 // scraps a given bill
-const { scrape } = require('cozy-konnector-libs')
+const { scrape, log } = require('cozy-konnector-libs')
 const moment = require('moment')
 const url = require('url')
 const qs = require('querystring')
@@ -49,14 +49,19 @@ module.exports = {
     const result = {
       vendor: 'amazon'
     }
-    let invoiceLink = $.find(`a[href*='generated_invoices_v2']`)
-    if (invoiceLink.length) {
-      result.fileurl = invoiceLink.attr('href')
-    }
 
-    invoiceLink = $.find(`a[href*='invoice/download.html']`)
-    if (invoiceLink.length) {
-      result.fileurl = baseUrl + invoiceLink.attr('href')
+    const $newInvoice = $.find(`a[href*='generated_invoices_v2']`)
+    const $normalInvoice = $.find(`a[href*='invoice/download.html']`)
+    const $htmlInvoice = $.find(`a[href*='print.html']`)
+
+    if ($newInvoice.length) {
+      result.fileurl = $newInvoice.attr('href')
+    } else if ($normalInvoice.length) {
+      result.fileurl = baseUrl + $normalInvoice.attr('href')
+    } else if ($htmlInvoice) {
+      result.fileurl = baseUrl + $htmlInvoice.attr('href')
+    } else {
+      log('warn', `Could not find a bill file`)
     }
 
     return result

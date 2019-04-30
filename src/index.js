@@ -47,15 +47,19 @@ class AmazonKonnector extends CookieKonnector {
   async fetchBillDetails(bill) {
     const $ = await this.request(baseUrl + bill.detailsUrl)
     const { amount, date, vendorRef, currency } = bill
+    const details = extractBillDetails($('ul'))
+    let filename = `${utils.formatDate(date)}_amazon_${amount.toFixed(
+      2
+    )}${currency}${vendorRef}`
+    if (details.fileurl.includes('print.html')) filename += '.html'
+    else filename += '.pdf'
     return {
       amount,
       date,
       vendorRef,
       currency,
-      ...extractBillDetails($('ul')),
-      filename: `${utils.formatDate(date)}_amazon_${amount.toFixed(
-        2
-      )}${currency}${vendorRef}.pdf`
+      ...details,
+      filename
     }
   }
 
