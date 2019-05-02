@@ -52,14 +52,14 @@ module.exports = {
 
     const $newInvoice = $.find(`a[href*='generated_invoices_v2']`)
     const $normalInvoice = $.find(`a[href*='invoice/download.html']`)
-    const $htmlInvoice = $.find(`a[href*='print.html']`)
+    // const $htmlInvoice = $.find(`a[href*='print.html']`)
 
     if ($newInvoice.length) {
       result.fileurl = $newInvoice.attr('href')
     } else if ($normalInvoice.length) {
       result.fileurl = baseUrl + $normalInvoice.attr('href')
-    } else if ($htmlInvoice) {
-      result.fileurl = baseUrl + $htmlInvoice.attr('href')
+      // } else if ($htmlInvoice.length) {
+      //   result.fileurl = baseUrl + $htmlInvoice.attr('href')
     } else {
       log('warn', `Could not find a bill file`)
     }
