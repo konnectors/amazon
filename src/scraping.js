@@ -7,37 +7,46 @@ moment.locale('fr')
 const baseUrl = 'https://www.amazon.fr'
 
 const commandParser = {
+  shipmentMessage: {
+    sel: '.a-color-success'
+  },
   amount: {
-    sel: '.a-color-price',
-    parse: amount =>
-      amount
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length)
-        .map(parseAmount)
-        .reduce((memo, amount) => memo + amount, 0)
+    sel:
+      '.order-info .a-fixed-right-grid-inner > .a-col-left > .a-row > div:nth-child(2) .value',
+    parse: parseAmount
   },
   currency: {
-    sel: '.a-color-price',
-    parse: doc => doc.split(' ')[0]
+    sel:
+      '.order-info .a-fixed-right-grid-inner > .a-col-left > .a-row > div:nth-child(2) .value',
+    parse: parseCurrency
   },
   date: {
     sel: '.shipment-top-row > div > div:nth-child(1) > span',
     parse: parseDate
   },
+  commandDate: {
+    sel:
+      '.order-info .a-fixed-right-grid-inner > .a-col-left > .a-row > div:nth-child(1) .value',
+    parse: date => moment(date, 'D MMMM YYYY').toDate()
+  },
   vendorRef: {
     sel: `a[href*='order-details']`,
     attr: 'href',
-    parse: href => qs.parse(url.parse(href).query).orderID
+    parse: href => href && qs.parse(url.parse(href).query).orderID
   },
   detailsUrl: {
     sel: `a[href*='order-details']`,
-    fn: $ =>
-      JSON.parse(
-        $.closest('ul')
-          .find(`[data-a-popover]`)
-          .attr('data-a-popover')
-      ).url
+    fn: $ => {
+      const json = $.closest('ul')
+        .find(`[data-a-popover]`)
+        .attr('data-a-popover')
+      try {
+        return JSON.parse(json).url
+      } catch (err) {
+        log('warn', err.message)
+        return false
+      }
+    }
   }
 }
 
@@ -80,10 +89,16 @@ function parseAmount(amount) {
   )
 }
 
+function parseCurrency(amount) {
+  return amount.split(' ')[0]
+}
+
 function parseDate(date) {
   const dateStr = date
     .split(' ')
     .slice(2)
     .join(' ')
-  return moment(dateStr, 'D MMM. YYYY').toDate()
+  const m = moment(dateStr, 'D MMM. YYYY')
+  if (!m.isValid()) return false
+  return m.toDate()
 }

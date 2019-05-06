@@ -11,9 +11,11 @@ describe('Bill Extractor', () => {
     )
     const $ = cheerio.load(billHtml)
     expect(extractMainBillInfo($('.order'))).toEqual({
+      commandDate: moment('2019-04-07').toDate(),
       date: moment('2019-04-08').toDate(),
       amount: 12.4,
       vendorRef: '404-7179283-6035526',
+      shipmentMessage: '',
       detailsUrl:
         '/gp/shared-cs/ajax/invoice/invoice.html?orderId=404-7179283-6035526&relatedRequestId=HGFAZC8TZ7T7NVSQPZB7&isADriveSubscription=&isHFC=&isBookingOrder=0',
       currency: 'EUR'
@@ -25,9 +27,11 @@ describe('Bill Extractor', () => {
     )
     const $ = cheerio.load(billHtml)
     expect(extractMainBillInfo($('.order'))).toEqual({
+      commandDate: moment('2018-12-27').toDate(),
       date: moment('2018-12-28').toDate(),
-      amount: 25.82,
+      amount: 28.81,
       vendorRef: '403-2920276-8540340',
+      shipmentMessage: '',
       detailsUrl:
         '/gp/shared-cs/ajax/invoice/invoice.html?orderId=403-2920276-8540340&relatedRequestId=6HNJQYVVZT53Z0ZCYMZ5&isADriveSubscription=&isHFC=&isBookingOrder=0',
       currency: 'EUR'
@@ -39,11 +43,29 @@ describe('Bill Extractor', () => {
     )
     const $ = cheerio.load(billHtml)
     expect(extractMainBillInfo($('.order'))).toEqual({
+      commandDate: moment('2018-12-18').toDate(),
       date: moment('2018-12-20').toDate(),
       amount: 53.94,
       vendorRef: '403-7329756-2859533',
+      shipmentMessage: '',
       detailsUrl:
         '/gp/shared-cs/ajax/invoice/invoice.html?orderId=403-7329756-2859533&relatedRequestId=6HNJQYVVZT53Z0ZCYMZ5&isADriveSubscription=&isHFC=&isBookingOrder=0',
+      currency: 'EUR'
+    })
+  })
+  it('should extract a nominal bill object from a command without shipment date', () => {
+    const billHtml = fs.readFileSync(
+      path.join(__dirname, 'fixtures', 'bill4.html')
+    )
+    const $ = cheerio.load(billHtml)
+    expect(extractMainBillInfo($('.order'))).toEqual({
+      date: false,
+      commandDate: moment('2018-10-18').toDate(),
+      amount: 7.2,
+      vendorRef: '403-8291715-3908355',
+      shipmentMessage: '',
+      detailsUrl:
+        '/gp/shared-cs/ajax/invoice/invoice.html?orderId=403-8291715-3908355&relatedRequestId=1R1CXD9R7NBS313B9EVB&isADriveSubscription=&isHFC=&isBookingOrder=0',
       currency: 'EUR'
     })
   })

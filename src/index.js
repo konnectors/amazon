@@ -9,16 +9,12 @@ const bluebird = require('bluebird')
 
 const { parseCommands, extractBillDetails } = require('./scraping')
 const baseUrl = 'https://www.amazon.fr'
-const orderUrl = `${baseUrl}/gp/your-account/order-history?ref_=ya_d_c_yo`
+const orderUrl = `${baseUrl}/gp/your-account/order-history`
 
 class AmazonKonnector extends CookieKonnector {
-  async fetch(fields) {
-    if (!(await this.testSession())) {
-      await this.authenticate(fields)
-    }
-
+  async fetchPeriod(period) {
     log('info', 'Fetching the list of orders')
-    const $ = await this.request(orderUrl)
+    const $ = await this.request(orderUrl + `?orderFilter=${period}`)
     let commands = parseCommands($)
 
     // is there a pager ?
@@ -32,30 +28,68 @@ class AmazonKonnector extends CookieKonnector {
       )
     }
 
+    commands = commands.filter(
+      command =>
+        command.vendorRef &&
+        command.detailsUrl &&
+        !command.shipmentMessage &&
+        (command.date || command.commandDate)
+    )
+
     log('info', 'Fetching details for each order')
     const bills = await bluebird.map(commands, bill =>
       this.fetchBillDetails(bill)
     )
 
+    return bills
+  }
+
+  async fetchYears() {
+    const $ = await this.request(orderUrl)
+    return Array.from($('#orderFilter option'))
+      .map(el => $(el).attr('value'))
+      .filter(period => period.includes('year'))
+  }
+
+  async fetch(fields) {
+    if (!(await this.testSession())) {
+      await this.authenticate(fields)
+    }
+
+    const bills = await this.fetchPeriod('months-6')
+
     log('info', 'Saving bills')
-    await this.saveBills(bills, fields, {
-      identifiers: 'amazon',
-      keys: ['vendorRef']
-    })
+    if (bills.length)
+      await this.saveBills(bills, fields, {
+        identifiers: 'amazon',
+        keys: ['vendorRef']
+      })
+
+    // now digg in the past
+    const years = await this.fetchYears()
+    for (const year of years) {
+      log('info', `Saving bills for year ${year}`)
+      const bills = await this.fetchPeriod(year)
+
+      if (bills.length)
+        await this.saveBills(bills, fields, {
+          identifiers: 'amazon',
+          keys: ['vendorRef']
+        })
+    }
   }
 
   async fetchBillDetails(bill) {
     const $ = await this.request(baseUrl + bill.detailsUrl)
-    const { amount, date, vendorRef, currency } = bill
+    const { amount, date, commandDate, vendorRef, currency } = bill
+    const finalDate = date || commandDate
     const details = extractBillDetails($('ul'))
-    let filename = `${utils.formatDate(date)}_amazon_${amount.toFixed(
+    let filename = `${utils.formatDate(finalDate)}_amazon_${amount.toFixed(
       2
-    )}${currency}${vendorRef}`
-    if (details.fileurl.includes('print.html')) filename += '.html'
-    else filename += '.pdf'
+    )}${currency}${vendorRef}.pdf`
     return {
       amount,
-      date,
+      date: finalDate,
       vendorRef,
       currency,
       ...details,
