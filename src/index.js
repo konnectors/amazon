@@ -1,3 +1,6 @@
+process.env.SENTRY_DSN =
+  process.env.SENTRY_DSN ||
+  'https://9de2d294dead448ab73cbb1f67374b6c@sentry.cozycloud.cc/124'
 const {
   CookieKonnector,
   log,
