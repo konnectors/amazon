@@ -165,7 +165,7 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async authenticate(fields) {
-    await this.setState('NO_LOGIN_DELAY')
+    await this.setState('HANDLE_LOGIN_SUCCESS')
     log('info', 'Authenticating ...')
     let last$ = null
     if (fields.pin_code && fields.pin_code.length > 1) {
