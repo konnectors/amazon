@@ -2,6 +2,7 @@ process.env.SENTRY_DSN =
   process.env.SENTRY_DSN ||
   'https://9de2d294dead448ab73cbb1f67374b6c@sentry.cozycloud.cc/124'
 const {
+  // cozyClient,
   CookieKonnector,
   log,
   errors,
@@ -15,6 +16,33 @@ const baseUrl = 'https://www.amazon.fr'
 const orderUrl = `${baseUrl}/gp/your-account/order-history`
 
 class AmazonKonnector extends CookieKonnector {
+  async fetch(fields) {
+    if (!(await this.testSession())) {
+      await this.authenticate(fields)
+    }
+
+    const bills = await this.fetchPeriod('months-6')
+
+    log('info', 'Saving bills')
+    if (bills.length)
+      await this.saveBills(bills, fields, {
+        identifiers: 'amazon',
+        keys: ['vendorRef']
+      })
+
+    // now digg in the past
+    const years = await this.fetchYears()
+    for (const year of years) {
+      log('info', `Saving bills for year ${year}`)
+      const bills = await this.fetchPeriod(year)
+
+      if (bills.length)
+        await this.saveBills(bills, fields, {
+          identifiers: 'amazon',
+          keys: ['vendorRef']
+        })
+    }
+  }
   async fetchPeriod(period) {
     log('info', 'Fetching the list of orders')
     const $ = await this.request(orderUrl + `?orderFilter=${period}`)
@@ -54,34 +82,6 @@ class AmazonKonnector extends CookieKonnector {
       .filter(period => period.includes('year'))
   }
 
-  async fetch(fields) {
-    if (!(await this.testSession())) {
-      await this.authenticate(fields)
-    }
-
-    const bills = await this.fetchPeriod('months-6')
-
-    log('info', 'Saving bills')
-    if (bills.length)
-      await this.saveBills(bills, fields, {
-        identifiers: 'amazon',
-        keys: ['vendorRef']
-      })
-
-    // now digg in the past
-    const years = await this.fetchYears()
-    for (const year of years) {
-      log('info', `Saving bills for year ${year}`)
-      const bills = await this.fetchPeriod(year)
-
-      if (bills.length)
-        await this.saveBills(bills, fields, {
-          identifiers: 'amazon',
-          keys: ['vendorRef']
-        })
-    }
-  }
-
   async fetchBillDetails(bill) {
     const $ = await this.request(baseUrl + bill.detailsUrl)
     const { amount, date, commandDate, vendorRef, currency } = bill
@@ -103,8 +103,9 @@ class AmazonKonnector extends CookieKonnector {
   async testSession() {
     log('info', 'Testing session')
     const $ = await this.request(orderUrl)
-    const test = !$('form[name=signIn]').length
-    if (test) {
+    const authType = this.detectAuthType($)
+
+    if (authType === false) {
       log('info', 'Session OK')
       return $
     }
@@ -126,6 +127,40 @@ class AmazonKonnector extends CookieKonnector {
       data: this._account.data
     })
     return $
+  }
+
+  detectAuthType($) {
+    let result = false
+
+    if ($('#auth-captcha-image').length) {
+      result = 'captcha'
+    } else if ($('input#continue').length) {
+      result = '2fa'
+    } else if ($('form[name=signIn]').length) {
+      result = 'login'
+    }
+
+    return result
+  }
+
+  async send2FAForm($) {
+    const $codeForm = await this.submitForm(
+      $,
+      'form[name=claimspicker]',
+      { option: 'email' },
+      null,
+      `${baseUrl}/ap/cvf/verify`
+    )
+
+    const formData = this.getFormData($codeForm('form.fwcim-form'))
+    if (process.env.NODE_ENV === 'standalone') {
+      await this.saveAccountData({ codeFormData: formData })
+      await this.saveSession()
+      throw new Error('errors.CHALLENGE_ASKED.EMAIL')
+    } else {
+      const code = await this.waitForTwoFaCode()
+      return this.sendVerifyCode(code)
+    }
   }
 
   async authenticate(fields) {
@@ -159,41 +194,27 @@ class AmazonKonnector extends CookieKonnector {
         },
         validate: (statusCode, $) => {
           last$ = $
-          if ($('#auth-captcha-image').length) {
+          const authType = this.detectAuthType($)
+          if (authType === 'captcha') {
             const error = new Error(errors.CHALLENGE_ASKED + '.CAPTCHA')
             error.no_retry = true
             throw error
           }
-          if ($('input#continue').length) {
+          if (authType === '2fa') {
             const error = new Error(errors.CHALLENGE_ASKED + '.EMAIL')
             error.no_retry = true
             throw error
           }
 
-          return !$('form[name=signIn]').length
+          return authType !== 'login'
         }
       })
       return result
     } catch (err) {
       if (err.message === errors.CHALLENGE_ASKED + '.EMAIL') {
         log('info', 'Sending the mail...')
-        const $codeForm = await this.submitForm(
-          last$,
-          'form[name=claimspicker]',
-          null,
-          null,
-          `${baseUrl}/ap/cvf/verify`
-        )
 
-        const formData = this.getFormData($codeForm('form.fwcim-form'))
-        if (process.env.NODE_ENV === 'standalone') {
-          await this.saveAccountData({ codeFormData: formData })
-          await this.saveSession()
-          throw err
-        } else {
-          const code = await this.waitForTwoFaCode()
-          await this.sendVerifyCode(code)
-        }
+        await this.send2FAForm(last$)
       } else if (err.message === errors.CHALLENGE_ASKED + '.CAPTCHA') {
         log('info', 'captcha url')
         const fileurl = last$('#auth-captcha-image').attr('src')
@@ -210,7 +231,7 @@ class AmazonKonnector extends CookieKonnector {
           body
         })
 
-        await this.submitForm(
+        const $ = await this.submitForm(
           last$,
           'form[name=signIn]',
           {
@@ -220,6 +241,13 @@ class AmazonKonnector extends CookieKonnector {
           },
           { referer: `${baseUrl}/ap/signin` }
         )
+
+        const authType = this.detectAuthType($)
+
+        if (authType === '2fa') {
+          await this.send2FAForm($)
+        }
+
         if (!(await this.testSession())) {
           log('error', 'Session after captcha resolution is not valid')
           throw new Error(errors.LOGIN_FAILED)
@@ -254,7 +282,7 @@ class AmazonKonnector extends CookieKonnector {
 
 const connector = new AmazonKonnector({
   // debug: content => {
-  //   debugOutput.push(content)
+  //   debugOutput.push(JSON.stringify(content))
   // },
   // debug: 'json',
   cheerio: true,
