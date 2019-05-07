@@ -19,6 +19,7 @@ class AmazonKonnector extends CookieKonnector {
   async fetch(fields) {
     if (!(await this.testSession())) {
       await this.authenticate(fields)
+      await this.setState('LOGIN_SUCCESS')
     }
 
     const bills = await this.fetchPeriod('months-6')
@@ -164,6 +165,7 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async authenticate(fields) {
+    await this.setState('NO_LOGIN_DELAY')
     log('info', 'Authenticating ...')
     let last$ = null
     if (fields.pin_code && fields.pin_code.length > 1) {
@@ -277,6 +279,10 @@ class AmazonKonnector extends CookieKonnector {
       inputs[input.name] = input.value
     }
     return inputs
+  }
+
+  async setState(state) {
+    return this.updateAccountAttributes({ state })
   }
 }
 
