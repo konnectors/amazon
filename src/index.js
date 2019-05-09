@@ -116,19 +116,25 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async sendVerifyCode(code, formData) {
-    if (!formData) formData = { ...this.getAccountData().codeFormData, code }
-    const $ = await this.request.post(`${baseUrl}/ap/cvf/verify`, {
-      form: formData
-    })
-    await this.saveSession()
-    // avoid to reuse the code for next connector run
-    delete this._account.auth.code
-    delete this._account.data.codeFormData
-    await this.updateAccountAttributes({
-      auth: this._account.auth,
-      data: this._account.data
-    })
-    return $
+    try {
+      if (!formData) formData = { ...this.getAccountData().codeFormData, code }
+      const $ = await this.request.post(`${baseUrl}/ap/cvf/verify`, {
+        form: formData
+      })
+      await this.saveSession()
+      // avoid to reuse the code for next connector run
+      delete this._account.auth.code
+      delete this._account.data.codeFormData
+      await this.updateAccountAttributes({
+        auth: this._account.auth,
+        data: this._account.data
+      })
+      return $
+    } catch (err) {
+      log('info', 'error while sending verify code')
+      log('error', err.message.substr(0, 60))
+      throw errors.VENDOR_DOWN
+    }
   }
 
   detectAuthType($) {
@@ -155,9 +161,9 @@ class AmazonKonnector extends CookieKonnector {
     )
 
     const formData = this.getFormData($codeForm('form.fwcim-form'))
+    await this.saveAccountData({ codeFormData: formData })
+    await this.saveSession()
     if (process.env.NODE_ENV === 'standalone') {
-      await this.saveAccountData({ codeFormData: formData })
-      await this.saveSession()
       throw new Error('errors.CHALLENGE_ASKED.EMAIL')
     } else {
       const code = await this.waitForTwoFaCode()
