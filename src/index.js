@@ -225,6 +225,7 @@ class AmazonKonnector extends CookieKonnector {
         log('info', 'Sending the mail...')
 
         await this.send2FAForm(last$)
+        return this.saveSession()
       } else if (err.message === errors.CHALLENGE_ASKED + '.CAPTCHA') {
         log('info', 'captcha url')
         const fileurl = last$('#auth-captcha-image').attr('src')
