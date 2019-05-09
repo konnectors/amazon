@@ -19,6 +19,7 @@ class AmazonKonnector extends CookieKonnector {
   async fetch(fields) {
     if (!(await this.testSession())) {
       await this.authenticate(fields)
+      log('info', 'Setting LOGIN_SUCCESS')
       await this.setState('LOGIN_SUCCESS')
     }
 
@@ -165,6 +166,7 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async authenticate(fields) {
+    log('info', 'Setting HANDLE_LOGIN_SUCCESS')
     await this.setState('HANDLE_LOGIN_SUCCESS')
     log('info', 'Authenticating ...')
     let last$ = null
