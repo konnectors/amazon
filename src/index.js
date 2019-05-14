@@ -30,7 +30,8 @@ class AmazonKonnector extends CookieKonnector {
       await this.saveBills(bills, fields, {
         identifiers: 'amazon',
         keys: ['vendorRef'],
-        validateFileContent: this.checkFileContent
+        validateFileContent: this.checkFileContent,
+        retry: 3
       })
 
     // now digg in the past
