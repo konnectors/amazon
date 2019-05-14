@@ -91,7 +91,7 @@ class AmazonKonnector extends CookieKonnector {
     const details = extractBillDetails($('ul'))
     let filename = `${utils.formatDate(finalDate)}_amazon_${amount.toFixed(
       2
-    )}${currency}${vendorRef}.pdf`
+    )}${currency}_${vendorRef}.pdf`
     return {
       amount,
       date: finalDate,
