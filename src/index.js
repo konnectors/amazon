@@ -2,7 +2,7 @@ process.env.SENTRY_DSN =
   process.env.SENTRY_DSN ||
   'https://9de2d294dead448ab73cbb1f67374b6c@sentry.cozycloud.cc/124'
 const {
-  // cozyClient,
+  cozyClient,
   CookieKonnector,
   log,
   errors,
@@ -16,7 +16,7 @@ const { getFormData, submitForm } = require('./auth')
 const baseUrl = 'https://www.amazon.fr'
 const orderUrl = `${baseUrl}/gp/your-account/order-history`
 
-// const debugOutput = []
+const debugOutput = []
 
 class AmazonKonnector extends CookieKonnector {
   async fetch(fields) {
@@ -293,6 +293,9 @@ class AmazonKonnector extends CookieKonnector {
 
     if (!(await this.testSession())) {
       log('info', `Wrong session even after ${maxAuthenticationSteps} tries`)
+      log('info', `authType = ${authType}`)
+
+      await saveDebugFile('after_max_retries', 'json', debugOutput, fields)
       throw new Error(errors.LOGIN_FAILED)
     }
     return this.saveSession()
@@ -321,9 +324,9 @@ class AmazonKonnector extends CookieKonnector {
 }
 
 const connector = new AmazonKonnector({
-  // debug: content => {
-  //   debugOutput.push(JSON.stringify(content))
-  // },
+  debug: content => {
+    debugOutput.push(JSON.stringify(content))
+  },
   // debug: 'json',
   cheerio: true,
   json: false,
@@ -335,10 +338,10 @@ const connector = new AmazonKonnector({
 })
 connector.run()
 
-// async function saveDebugFile(prefix, ext, data, fields) {
-//   const folder = await cozyClient.files.statByPath(fields.folderPath)
-//   return cozyClient.files.create(data, {
-//     name: `${prefix}_${new Date().toJSON()}.${ext}`,
-//     dirID: folder._id
-//   })
-// }
+async function saveDebugFile(prefix, ext, data, fields) {
+  const folder = await cozyClient.files.statByPath(fields.folderPath)
+  return cozyClient.files.create(data, {
+    name: `${prefix}_${new Date().toJSON()}.${ext}`,
+    dirID: folder._id
+  })
+}
