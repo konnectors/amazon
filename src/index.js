@@ -15,6 +15,8 @@ const { parseCommands, extractBillDetails } = require('./scraping')
 const baseUrl = 'https://www.amazon.fr'
 const orderUrl = `${baseUrl}/gp/your-account/order-history`
 
+// const debugOutput = []
+
 class AmazonKonnector extends CookieKonnector {
   async fetch(fields) {
     if (!(await this.testSession())) {
@@ -121,10 +123,10 @@ class AmazonKonnector extends CookieKonnector {
     return false
   }
 
-  async sendVerifyCode(code, formData) {
+  async sendVerifyCode(code, formData, url = `${baseUrl}/ap/cvf/verify`) {
     try {
       if (!formData) formData = { ...this.getAccountData().codeFormData, code }
-      const $ = await this.request.post(`${baseUrl}/ap/cvf/verify`, {
+      const $ = await this.request.post(url, {
         form: formData
       })
       await this.saveSession()
@@ -150,6 +152,8 @@ class AmazonKonnector extends CookieKonnector {
       result = 'captcha'
     } else if ($('input#continue').length) {
       result = '2fa'
+    } else if ($('input#auth-signin-button').length) {
+      result = 'mfa'
     } else if ($('form[name=signIn]').length) {
       result = 'login'
     }
@@ -221,6 +225,11 @@ class AmazonKonnector extends CookieKonnector {
             error.no_retry = true
             throw error
           }
+          if (authType === 'mfa') {
+            const error = new Error(errors.CHALLENGE_ASKED + '.MFA')
+            error.no_retry = true
+            throw error
+          }
 
           return authType !== 'login'
         }
@@ -260,9 +269,32 @@ class AmazonKonnector extends CookieKonnector {
         )
 
         const authType = this.detectAuthType($)
+        log('info', `${authType} detected after captcha resolution`)
 
         if (authType === '2fa') {
           await this.send2FAForm($)
+        } else if (authType === 'mfa') {
+          const formData = this.getFormData($('#auth-mfa-form'))
+          formData.rememberDevice = ''
+          let code = null
+          if (fields.mfa_code) {
+            code = fields.mfa_code
+          } else {
+            code = await this.waitForTwoFaCode()
+          }
+
+          log('info', `Found code ${code}`)
+          formData.otpCode = code
+
+          await this.sendVerifyCode(
+            code,
+            formData,
+            $('#auth-mfa-form').attr('action')
+          )
+        } else if (authType === false) {
+          log('info', 'No auth form detected anymore')
+        } else {
+          log('warn', `${authType} is not handled after captcha resolution`)
         }
 
         if (!(await this.testSession())) {
@@ -271,6 +303,27 @@ class AmazonKonnector extends CookieKonnector {
           throw new Error(errors.LOGIN_FAILED)
         }
         return this.saveSession()
+      } else if (err.message === errors.CHALLENGE_ASKED + '.MFA') {
+        log('info', 'Requiring otp...')
+
+        const formData = this.getFormData(last$('#auth-mfa-form'))
+        formData.rememberDevice = ''
+        let code = null
+        if (fields.mfa_code) {
+          code = fields.mfa_code
+        } else {
+          code = await this.waitForTwoFaCode()
+        }
+
+        log('info', `Found code ${code}`)
+        formData.otpCode = code
+
+        const result$ = await this.sendVerifyCode(
+          code,
+          formData,
+          last$('#auth-mfa-form').attr('action')
+        )
+        return result$
       }
 
       throw err
