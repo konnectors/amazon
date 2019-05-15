@@ -2,7 +2,7 @@ process.env.SENTRY_DSN =
   process.env.SENTRY_DSN ||
   'https://9de2d294dead448ab73cbb1f67374b6c@sentry.cozycloud.cc/124'
 const {
-  cozyClient,
+  // cozyClient,
   CookieKonnector,
   log,
   errors,
@@ -12,10 +12,11 @@ const {
 const bluebird = require('bluebird')
 
 const { parseCommands, extractBillDetails } = require('./scraping')
+const { getFormData, submitForm } = require('./auth')
 const baseUrl = 'https://www.amazon.fr'
 const orderUrl = `${baseUrl}/gp/your-account/order-history`
 
-const debugOutput = []
+// const debugOutput = []
 
 class AmazonKonnector extends CookieKonnector {
   async fetch(fields) {
@@ -162,7 +163,8 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async send2FAForm($) {
-    const $codeForm = await this.submitForm(
+    const $codeForm = await submitForm(
+      this.request,
       $,
       'form[name=claimspicker]',
       { option: 'email' },
@@ -170,7 +172,7 @@ class AmazonKonnector extends CookieKonnector {
       `${baseUrl}/ap/cvf/verify`
     )
 
-    const formData = this.getFormData($codeForm('form.fwcim-form'))
+    const formData = getFormData($codeForm('form.fwcim-form'))
     await this.saveAccountData({ codeFormData: formData })
     await this.saveSession()
     if (process.env.NODE_ENV === 'standalone') {
@@ -181,13 +183,83 @@ class AmazonKonnector extends CookieKonnector {
     }
   }
 
+  async submitLoginForm(fields) {
+    let last$ = null
+    await this.signin({
+      url: orderUrl,
+      formSelector: 'form[name=signIn]',
+      formData: {
+        email: fields.email,
+        password: fields.password,
+        rememberMe: true
+      },
+      validate: (statusCode, $) => {
+        last$ = $
+        return true
+      }
+    })
+    return last$
+  }
+
+  async submitMfaForm($, fields) {
+    log('info', 'Requiring otp...')
+
+    const formData = getFormData($('#auth-mfa-form'))
+    formData.rememberDevice = ''
+    let code = null
+
+    if (fields.mfa_code) {
+      // standalone mode
+      code = fields.mfa_code
+    } else {
+      // normal production mode
+      code = await this.waitForTwoFaCode()
+    }
+
+    formData.otpCode = code
+
+    return this.sendVerifyCode(
+      code,
+      formData,
+      $('#auth-mfa-form').attr('action')
+    )
+  }
+
+  async submitCaptchaForm($, fields) {
+    const fileurl = $('#auth-captcha-image').attr('src')
+
+    const imageRequest = this.requestFactory({
+      cheerio: false,
+      json: false
+    })
+    const body = await imageRequest(fileurl, { encoding: 'base64' })
+    const captchaResponse = await solveCaptcha({
+      type: 'image',
+      body
+    })
+
+    return submitForm(
+      this.request,
+      $,
+      'form[name=signIn]',
+      {
+        guess: captchaResponse,
+        password: fields.password,
+        'claim-autofile-hint': fields.email
+      },
+      { referer: `${baseUrl}/ap/signin` }
+    )
+  }
+
   async authenticate(fields) {
     log('info', 'Setting HANDLE_LOGIN_SUCCESS')
     await this.setState('HANDLE_LOGIN_SUCCESS')
     log('info', 'Authenticating ...')
-    let last$ = null
     if (fields.pin_code && fields.pin_code.length > 1) {
-      log('info', 'Found a code')
+      log(
+        'info',
+        'We are in standalone mode and I found a code. Sending it directly'
+      )
       return this.sendVerifyCode(fields.pin_code)
     }
 
@@ -202,145 +274,28 @@ class AmazonKonnector extends CookieKonnector {
       }
     )
 
-    try {
-      // try normal signin
-      const result = await this.signin({
-        url: orderUrl,
-        formSelector: 'form[name=signIn]',
-        formData: {
-          email: fields.email,
-          password: fields.password,
-          rememberMe: true
-        },
-        validate: (statusCode, $) => {
-          last$ = $
-          const authType = this.detectAuthType($)
-          if (authType === 'captcha') {
-            const error = new Error(errors.CHALLENGE_ASKED + '.CAPTCHA')
-            error.no_retry = true
-            throw error
-          }
-          if (authType === '2fa') {
-            const error = new Error(errors.CHALLENGE_ASKED + '.EMAIL')
-            error.no_retry = true
-            throw error
-          }
-          if (authType === 'mfa') {
-            const error = new Error(errors.CHALLENGE_ASKED + '.MFA')
-            error.no_retry = true
-            throw error
-          }
-
-          return authType !== 'login'
-        }
-      })
-      return result
-    } catch (err) {
-      if (err.message === errors.CHALLENGE_ASKED + '.EMAIL') {
-        log('info', 'Sending the mail...')
-
-        await this.send2FAForm(last$)
-        return this.saveSession()
-      } else if (err.message === errors.CHALLENGE_ASKED + '.CAPTCHA') {
-        log('info', 'captcha url')
-        const fileurl = last$('#auth-captcha-image').attr('src')
-        log('info', fileurl)
-
-        const imageRequest = this.requestFactory({
-          cheerio: false,
-          json: false
-        })
-        const body = await imageRequest(fileurl, { encoding: 'base64' })
-
-        const captchaResponse = await solveCaptcha({
-          type: 'image',
-          body
-        })
-
-        const $ = await this.submitForm(
-          last$,
-          'form[name=signIn]',
-          {
-            guess: captchaResponse,
-            password: fields.password,
-            'claim-autofile-hint': fields.email
-          },
-          { referer: `${baseUrl}/ap/signin` }
-        )
-
-        const authType = this.detectAuthType($)
-        log('info', `${authType} detected after captcha resolution`)
-
-        if (authType === '2fa') {
-          await this.send2FAForm($)
-        } else if (authType === 'mfa') {
-          const formData = this.getFormData($('#auth-mfa-form'))
-          formData.rememberDevice = ''
-          let code = null
-          if (fields.mfa_code) {
-            code = fields.mfa_code
-          } else {
-            code = await this.waitForTwoFaCode()
-          }
-
-          log('info', `Found code ${code}`)
-          formData.otpCode = code
-
-          await this.sendVerifyCode(
-            code,
-            formData,
-            $('#auth-mfa-form').attr('action')
-          )
-        } else if (authType === false) {
-          log('info', 'No auth form detected anymore')
-        } else {
-          log('warn', `${authType} is not handled after captcha resolution`)
-        }
-
-        if (!(await this.testSession())) {
-          log('error', 'Session after captcha resolution is not valid')
-          log('info', 'saving more logs in the destination folder')
-          await saveDebugFile('after_captcha', 'json', debugOutput, fields)
-
-          throw new Error(errors.LOGIN_FAILED)
-        }
-        return this.saveSession()
-      } else if (err.message === errors.CHALLENGE_ASKED + '.MFA') {
-        log('info', 'Requiring otp...')
-
-        const formData = this.getFormData(last$('#auth-mfa-form'))
-        formData.rememberDevice = ''
-        let code = null
-        if (fields.mfa_code) {
-          code = fields.mfa_code
-        } else {
-          code = await this.waitForTwoFaCode()
-        }
-
-        log('info', `Found code ${code}`)
-        formData.otpCode = code
-
-        const result$ = await this.sendVerifyCode(
-          code,
-          formData,
-          last$('#auth-mfa-form').attr('action')
-        )
-        return result$
+    let authType = 'login'
+    let counter = 0
+    const maxAuthenticationSteps = 3
+    let last$ = null
+    while (authType !== false && counter < maxAuthenticationSteps) {
+      if (authType === 'login') {
+        last$ = await this.submitLoginForm(fields)
+      } else if (authType === '2fa') {
+        last$ = await this.send2FAForm(last$)
+      } else if (authType === 'mfa') {
+        last$ = await this.submitMfaForm(last$, fields)
+      } else if (authType === 'captcha') {
+        last$ = await this.submitCaptchaForm(last$, fields)
       }
-
-      throw err
+      authType = this.detectAuthType(last$)
     }
-  }
 
-  submitForm($, formSelector, values = {}, headers = {}, action) {
-    const $form = $(formSelector)
-    const inputs = this.getFormData($form)
-    if (!action) action = $form.attr('action')
-    return this.request(action, {
-      method: $form.attr('method'),
-      form: { ...inputs, ...values },
-      headers
-    })
+    if (!(await this.testSession())) {
+      log('info', `Wrong session even after ${maxAuthenticationSteps} tries`)
+      throw new Error(errors.LOGIN_FAILED)
+    }
+    return this.saveSession()
   }
 
   async checkFileContent(fileDocument) {
@@ -360,24 +315,15 @@ class AmazonKonnector extends CookieKonnector {
     }
   }
 
-  getFormData($form) {
-    const inputs = {}
-    const arr = $form.serializeArray()
-    for (let input of arr) {
-      inputs[input.name] = input.value
-    }
-    return inputs
-  }
-
   async setState(state) {
     return this.updateAccountAttributes({ state })
   }
 }
 
 const connector = new AmazonKonnector({
-  debug: content => {
-    debugOutput.push(JSON.stringify(content))
-  },
+  // debug: content => {
+  //   debugOutput.push(JSON.stringify(content))
+  // },
   // debug: 'json',
   cheerio: true,
   json: false,
@@ -389,10 +335,10 @@ const connector = new AmazonKonnector({
 })
 connector.run()
 
-async function saveDebugFile(prefix, ext, data, fields) {
-  const folder = await cozyClient.files.statByPath(fields.folderPath)
-  return cozyClient.files.create(data, {
-    name: `${prefix}_${new Date().toJSON()}.${ext}`,
-    dirID: folder._id
-  })
-}
+// async function saveDebugFile(prefix, ext, data, fields) {
+//   const folder = await cozyClient.files.statByPath(fields.folderPath)
+//   return cozyClient.files.create(data, {
+//     name: `${prefix}_${new Date().toJSON()}.${ext}`,
+//     dirID: folder._id
+//   })
+// }
