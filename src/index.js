@@ -29,7 +29,9 @@ class AmazonKonnector extends CookieKonnector {
     if (bills.length)
       await this.saveBills(bills, fields, {
         identifiers: 'amazon',
-        keys: ['vendorRef']
+        keys: ['vendorRef'],
+        validateFileContent: this.checkFileContent,
+        retry: 3
       })
 
     // now digg in the past
@@ -41,7 +43,8 @@ class AmazonKonnector extends CookieKonnector {
       if (bills.length)
         await this.saveBills(bills, fields, {
           identifiers: 'amazon',
-          keys: ['vendorRef']
+          keys: ['vendorRef'],
+          validateFileContent: this.checkFileContent
         })
     }
   }
@@ -91,7 +94,7 @@ class AmazonKonnector extends CookieKonnector {
     const details = extractBillDetails($('ul'))
     let filename = `${utils.formatDate(finalDate)}_amazon_${amount.toFixed(
       2
-    )}${currency}${vendorRef}.pdf`
+    )}${currency}_${vendorRef}.pdf`
     return {
       amount,
       date: finalDate,
@@ -279,6 +282,23 @@ class AmazonKonnector extends CookieKonnector {
       form: { ...inputs, ...values },
       headers
     })
+  }
+
+  async checkFileContent(fileDocument) {
+    try {
+      log(
+        'info',
+        `checking file content for file ${fileDocument.attributes.name}`
+      )
+      const pdfContent = await utils.getPdfText(fileDocument._id, {
+        pages: [1]
+      })
+      log('info', `got content of length ${pdfContent.text.length}`)
+      return true
+    } catch (err) {
+      log('warn', `wrong file content for file ${fileDocument.attributes.name}`)
+      return false
+    }
   }
 
   getFormData($form) {
