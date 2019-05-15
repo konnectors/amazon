@@ -31,7 +31,8 @@ class AmazonKonnector extends CookieKonnector {
         identifiers: 'amazon',
         keys: ['vendorRef'],
         validateFileContent: this.checkFileContent,
-        retry: 3
+        retry: 3,
+        contentType: 'application/pdf'
       })
 
     // now digg in the past
@@ -44,7 +45,9 @@ class AmazonKonnector extends CookieKonnector {
         await this.saveBills(bills, fields, {
           identifiers: 'amazon',
           keys: ['vendorRef'],
-          validateFileContent: this.checkFileContent
+          validateFileContent: this.checkFileContent,
+          retry: 3,
+          contentType: 'application/pdf'
         })
     }
   }
@@ -264,6 +267,7 @@ class AmazonKonnector extends CookieKonnector {
 
         if (!(await this.testSession())) {
           log('error', 'Session after captcha resolution is not valid')
+          log('info', `Detected authType = ${authType}`)
           throw new Error(errors.LOGIN_FAILED)
         }
         return this.saveSession()
