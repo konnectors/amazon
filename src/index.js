@@ -18,6 +18,8 @@ const orderUrl = `${baseUrl}/gp/your-account/order-history`
 
 const debugOutput = []
 
+const DEFAULT_TIMEOUT = Date.now() + 4 * 60 * 1000 // 4 minutes by default since the stack allows 5 minutes
+
 class AmazonKonnector extends CookieKonnector {
   async fetch(fields) {
     if (!(await this.testSession())) {
@@ -41,6 +43,13 @@ class AmazonKonnector extends CookieKonnector {
     // now digg in the past
     const years = await this.fetchYears()
     for (const year of years) {
+      if (Date.now() > DEFAULT_TIMEOUT) {
+        log(
+          'warn',
+          `Timeout reached in ${year}. Will digg in the past next time`
+        )
+        break
+      }
       log('info', `Saving bills for year ${year}`)
       const bills = await this.fetchPeriod(year)
 
