@@ -22,37 +22,16 @@ const DEFAULT_TIMEOUT = Date.now() + 4 * 60 * 1000 // 4 minutes by default since
 
 class AmazonKonnector extends CookieKonnector {
   async fetch(fields) {
-    if (!(await this.testSession())) {
-      await this.authenticate(fields)
-      log('info', 'Setting LOGIN_SUCCESS')
-      await this.setState('LOGIN_SUCCESS')
-    }
-
-    const bills = await this.fetchPeriod('months-6')
-
-    log('info', 'Saving bills')
-    if (bills.length)
-      await this.saveBills(bills, fields, {
-        identifiers: 'amazon',
-        keys: ['vendorRef'],
-        validateFileContent: this.checkFileContent,
-        retry: 3,
-        contentType: 'application/pdf'
-      })
-
-    // now digg in the past
-    const years = await this.fetchYears()
-    for (const year of years) {
-      if (Date.now() > DEFAULT_TIMEOUT) {
-        log(
-          'warn',
-          `Timeout reached in ${year}. Will digg in the past next time`
-        )
-        break
+    try {
+      if (!(await this.testSession())) {
+        await this.authenticate(fields)
+        log('info', 'Setting LOGIN_SUCCESS')
+        await this.setState('LOGIN_SUCCESS')
       }
-      log('info', `Saving bills for year ${year}`)
-      const bills = await this.fetchPeriod(year)
 
+      const bills = await this.fetchPeriod('months-6')
+
+      log('info', 'Saving bills')
       if (bills.length)
         await this.saveBills(bills, fields, {
           identifiers: 'amazon',
@@ -61,6 +40,32 @@ class AmazonKonnector extends CookieKonnector {
           retry: 3,
           contentType: 'application/pdf'
         })
+
+      // now digg in the past
+      const years = await this.fetchYears()
+      for (const year of years) {
+        if (Date.now() > DEFAULT_TIMEOUT) {
+          log(
+            'warn',
+            `Timeout reached in ${year}. Will digg in the past next time`
+          )
+          break
+        }
+        log('info', `Saving bills for year ${year}`)
+        const bills = await this.fetchPeriod(year)
+
+        if (bills.length)
+          await this.saveBills(bills, fields, {
+            identifiers: 'amazon',
+            keys: ['vendorRef'],
+            validateFileContent: this.checkFileContent,
+            retry: 3,
+            contentType: 'application/pdf'
+          })
+      }
+    } catch (err) {
+      log('error', err.message.substring(0, 60))
+      throw err
     }
   }
   async fetchPeriod(period) {
@@ -88,9 +93,9 @@ class AmazonKonnector extends CookieKonnector {
     )
 
     log('info', 'Fetching details for each order')
-    const bills = await bluebird.map(commands, bill =>
-      this.fetchBillDetails(bill)
-    )
+    const bills = await bluebird
+      .map(commands, bill => this.fetchBillDetails(bill))
+      .filter(Boolean)
 
     return bills
   }
@@ -103,20 +108,28 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async fetchBillDetails(bill) {
-    const $ = await this.request(baseUrl + bill.detailsUrl)
-    const { amount, date, commandDate, vendorRef, currency } = bill
-    const finalDate = date || commandDate
-    const details = extractBillDetails($('ul'))
-    let filename = `${utils.formatDate(finalDate)}_amazon_${amount.toFixed(
-      2
-    )}${currency}_${vendorRef}.pdf`
-    return {
-      amount,
-      date: finalDate,
-      vendorRef,
-      currency,
-      ...details,
-      filename
+    try {
+      const $ = await this.request(baseUrl + bill.detailsUrl)
+      const { amount, date, commandDate, vendorRef, currency } = bill
+      const finalDate = date || commandDate
+      const details = extractBillDetails($('ul'))
+      let filename = `${utils.formatDate(finalDate)}_amazon_${amount.toFixed(
+        2
+      )}${currency}_${vendorRef}.pdf`
+      return {
+        amount,
+        date: finalDate,
+        vendorRef,
+        currency,
+        ...details,
+        filename
+      }
+    } catch (err) {
+      log(
+        'warn',
+        `Error while fetching bill details : ${err.message.substr(0, 60)}`
+      )
+      return false
     }
   }
 
