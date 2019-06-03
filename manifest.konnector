@@ -1,5 +1,5 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.4",
   "name": "Amazon",
   "type": "konnector",
   "language": "node",
@@ -9,7 +9,7 @@
   "editor": "Cozy",
   "vendor_link": "https://www.amazon.fr/",
   "categories": [
-    "online_services"
+    "shopping"
   ],
   "fields": {
     "email": {
