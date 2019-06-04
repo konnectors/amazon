@@ -171,6 +171,27 @@ class AmazonKonnector extends CookieKonnector {
   detectAuthType($) {
     let result = false
 
+    // try to find a warning message on page
+    if ($('#auth-warning-message-box').length) {
+      log(
+        'warn',
+        `Amazon warning message : ${$('#auth-warning-message-box')
+          .text()
+          .trim()
+          .replace(/\n/g, ' ')}`
+      )
+    }
+    // try to find an error message on page
+    if ($('#auth-error-message-box').length) {
+      log(
+        'warn',
+        `Amazon error message : ${$('#auth-error-message-box')
+          .text()
+          .trim()
+          .replace(/\n/g, ' ')}`
+      )
+    }
+
     if ($('#auth-captcha-image').length) {
       result = 'captcha'
     } else if ($('input#continue').length) {
