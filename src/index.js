@@ -2,7 +2,7 @@ process.env.SENTRY_DSN =
   process.env.SENTRY_DSN ||
   'https://9de2d294dead448ab73cbb1f67374b6c@sentry.cozycloud.cc/124'
 const {
-  cozyClient,
+  // cozyClient,
   CookieKonnector,
   log,
   errors,
@@ -301,23 +301,34 @@ class AmazonKonnector extends CookieKonnector {
     const maxAuthenticationSteps = 3
     let last$ = null
     while (authType !== false && counter < maxAuthenticationSteps) {
-      if (authType === 'login') {
-        last$ = await this.submitLoginForm(fields)
-      } else if (authType === '2fa') {
-        last$ = await this.send2FAForm(last$)
-      } else if (authType === 'mfa') {
-        last$ = await this.submitMfaForm(last$, fields)
-      } else if (authType === 'captcha') {
-        last$ = await this.submitCaptchaForm(last$, fields)
+      counter++
+      try {
+        if (authType === 'login') {
+          last$ = await this.submitLoginForm(fields)
+        } else if (authType === '2fa') {
+          last$ = await this.send2FAForm(last$)
+        } else if (authType === 'mfa') {
+          last$ = await this.submitMfaForm(last$, fields)
+        } else if (authType === 'captcha') {
+          last$ = await this.submitCaptchaForm(last$, fields)
+        }
+        authType = this.detectAuthType(last$)
+      } catch (err) {
+        log(
+          'warn',
+          `Error in while authenticating ${authType} : ${err.message.substring(
+            0,
+            60
+          )}`
+        )
       }
-      authType = this.detectAuthType(last$)
     }
 
     if (!(await this.testSession())) {
       log('info', `Wrong session even after ${maxAuthenticationSteps} tries`)
       log('info', `authType = ${authType}`)
 
-      await saveDebugFile('after_max_retries', 'json', debugOutput, fields)
+      // await saveDebugFile('after_max_retries', 'json', debugOutput, fields)
       throw new Error(errors.LOGIN_FAILED)
     }
     return this.saveSession()
@@ -360,10 +371,10 @@ const connector = new AmazonKonnector({
 })
 connector.run()
 
-async function saveDebugFile(prefix, ext, data, fields) {
-  const folder = await cozyClient.files.statByPath(fields.folderPath)
-  return cozyClient.files.create(data, {
-    name: `${prefix}_${new Date().toJSON()}.${ext}`,
-    dirID: folder._id
-  })
-}
+// async function saveDebugFile(prefix, ext, data, fields) {
+//   const folder = await cozyClient.files.statByPath(fields.folderPath)
+//   return cozyClient.files.create(data, {
+//     name: `${prefix}_${new Date().toJSON()}.${ext}`,
+//     dirID: folder._id
+//   })
+// }
