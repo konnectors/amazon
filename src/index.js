@@ -335,6 +335,7 @@ class AmazonKonnector extends CookieKonnector {
         }
         authType = this.detectAuthType(last$)
       } catch (err) {
+        if (err.message === 'USER_ACTION_NEEDED.TWOFA_EXPIRED') throw err
         log(
           'warn',
           `Error in while authenticating ${authType} : ${err.message.substring(
