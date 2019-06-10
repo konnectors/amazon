@@ -11,7 +11,7 @@ const {
 const bluebird = require('bluebird')
 
 const { parseCommands, extractBillDetails } = require('./scraping')
-const { getFormData, submitForm } = require('./auth')
+const { getFormData, submitForm, detectAuthType } = require('./auth')
 const baseUrl = 'https://www.amazon.fr'
 const orderUrl = `${baseUrl}/gp/your-account/order-history`
 
@@ -133,7 +133,7 @@ class AmazonKonnector extends CookieKonnector {
   async testSession() {
     log('info', 'Testing session')
     const $ = await this.request(orderUrl)
-    const authType = this.detectAuthType($)
+    const authType = detectAuthType($)
 
     if (authType === false) {
       log('info', 'Session OK')
@@ -163,43 +163,6 @@ class AmazonKonnector extends CookieKonnector {
       log('error', err.message.substr(0, 60))
       throw errors.VENDOR_DOWN
     }
-  }
-
-  detectAuthType($) {
-    let result = false
-
-    // try to find a warning message on page
-    if ($('#auth-warning-message-box').length) {
-      log(
-        'warn',
-        `Amazon warning message : ${$('#auth-warning-message-box')
-          .text()
-          .trim()
-          .replace(/\n/g, ' ')}`
-      )
-    }
-    // try to find an error message on page
-    if ($('#auth-error-message-box').length) {
-      log(
-        'warn',
-        `Amazon error message : ${$('#auth-error-message-box')
-          .text()
-          .trim()
-          .replace(/\n/g, ' ')}`
-      )
-    }
-
-    if ($('#auth-captcha-image').length) {
-      result = 'captcha'
-    } else if ($('input#continue').length) {
-      result = '2fa'
-    } else if ($('input#auth-signin-button').length) {
-      result = 'mfa'
-    } else if ($('form[name=signIn]').length) {
-      result = 'login'
-    }
-
-    return result
   }
 
   async send2FAForm($) {
@@ -330,7 +293,7 @@ class AmazonKonnector extends CookieKonnector {
         } else if (authType === 'captcha') {
           last$ = await this.submitCaptchaForm(last$, fields)
         }
-        authType = this.detectAuthType(last$)
+        authType = detectAuthType(last$)
       } catch (err) {
         if (err.message === 'USER_ACTION_NEEDED.TWOFA_EXPIRED') throw err
         log(
