@@ -1,3 +1,4 @@
+const { log } = require('cozy-konnector-libs')
 const getFormData = $form => {
   const inputs = {}
   const arr = $form.serializeArray()
@@ -25,4 +26,43 @@ const submitForm = (
   })
 }
 
-module.exports = { getFormData, submitForm }
+const detectAuthType = $ => {
+  let result = false
+
+  // try to find a warning message on page
+  if ($('#auth-warning-message-box').length) {
+    log(
+      'warn',
+      `Amazon warning message : ${$('#auth-warning-message-box')
+        .text()
+        .trim()
+        .replace(/\n/g, ' ')}`
+    )
+  }
+  // try to find an error message on page
+  if ($('#auth-error-message-box').length) {
+    log(
+      'warn',
+      `Amazon error message : ${$('#auth-error-message-box')
+        .text()
+        .trim()
+        .replace(/\n/g, ' ')}`
+    )
+  }
+
+  if ($('#auth-captcha-image').length) {
+    result = 'captcha'
+  } else if ($('input#continue').length) {
+    result = '2fa'
+    const options = Array.from($(':radio')).map(el => $(el).val())
+    log('info', `2FA options detected : ${JSON.stringify(options)}`)
+  } else if ($('input#auth-signin-button').length) {
+    result = 'mfa'
+  } else if ($('form[name=signIn]').length) {
+    result = 'login'
+  }
+
+  return result
+}
+
+module.exports = { getFormData, submitForm, detectAuthType }
