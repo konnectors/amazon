@@ -54,8 +54,6 @@ const detectAuthType = $ => {
     result = 'captcha'
   } else if ($('input#continue').length) {
     result = '2fa'
-    const options = Array.from($(':radio')).map(el => $(el).val())
-    log('info', `2FA options detected : ${JSON.stringify(options)}`)
   } else if ($('input#auth-signin-button').length) {
     result = 'mfa'
   } else if ($('form[name=signIn]').length) {
