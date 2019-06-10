@@ -166,11 +166,22 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async send2FAForm($) {
+    const options = Array.from($('input[name=option]')).map(el => $(el).val())
+    log('info', `2FA options detected : ${JSON.stringify(options)}`)
+
+    let chosenOption = null
+    if (options.includes('sms')) {
+      chosenOption = { option: 'sms' }
+    }
+    if (options.includes('email')) {
+      chosenOption = { option: 'email' }
+    }
+    log('info', `Chose option ${JSON.stringify(chosenOption)}`)
     const $codeForm = await submitForm(
       this.request,
       $,
       'form[name=claimspicker]',
-      { option: 'email' },
+      { ...chosenOption },
       null,
       `${baseUrl}/ap/cvf/verify`
     )
