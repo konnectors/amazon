@@ -193,7 +193,8 @@ class AmazonKonnector extends CookieKonnector {
       throw new Error('errors.CHALLENGE_ASKED.EMAIL')
     } else {
       const code = await this.waitForTwoFaCode()
-      return this.sendVerifyCode(code)
+      const result = await this.sendVerifyCode(code)
+      return result
     }
   }
 
