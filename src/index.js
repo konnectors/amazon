@@ -144,6 +144,7 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async sendVerifyCode(code, formData, url = `${baseUrl}/ap/cvf/verify`) {
+    log('info', 'Sending verification code to amazon')
     try {
       if (!formData) formData = { ...this.getAccountData().codeFormData, code }
       const $ = await this.request.post(url, {
@@ -167,7 +168,6 @@ class AmazonKonnector extends CookieKonnector {
 
   async send2FAForm($) {
     const options = Array.from($('input[name=option]')).map(el => $(el).val())
-    log('info', `2FA options detected : ${JSON.stringify(options)}`)
 
     let chosenOption = null
     if (options.includes('sms')) {
@@ -177,6 +177,15 @@ class AmazonKonnector extends CookieKonnector {
       chosenOption = { option: 'email' }
     }
     log('info', `Chose option ${JSON.stringify(chosenOption)}`)
+
+    if (process.env.COZY_JOB_MANUAL_EXECUTION !== 'true') {
+      log(
+        'warn',
+        `this in not a manual execution. It is not possible to handle 2FA here.`
+      )
+      throw new Error('USER_ACTION_NEEDED.TWOFA_EXPIRED')
+    }
+
     const $codeForm = await submitForm(
       this.request,
       $,
