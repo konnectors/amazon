@@ -34,7 +34,9 @@ class AmazonKonnector extends CookieKonnector {
           keys: ['vendorRef'],
           validateFileContent: this.checkFileContent,
           retry: 3,
-          contentType: 'application/pdf'
+          contentType: 'application/pdf',
+          sourceAccountIdentifier: fields.email,
+          fileIdAttributes: ['vendorRef']
         })
 
       // now digg in the past
@@ -56,7 +58,9 @@ class AmazonKonnector extends CookieKonnector {
             keys: ['vendorRef'],
             validateFileContent: this.checkFileContent,
             retry: 3,
-            contentType: 'application/pdf'
+            contentType: 'application/pdf',
+            sourceAccountIdentifier: fields.email,
+            fileIdAttributes: ['vendorRef']
           })
       }
     } catch (err) {
