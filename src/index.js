@@ -27,7 +27,7 @@ class AmazonKonnector extends CookieKonnector {
 
       const bills = await this.fetchPeriod('months-6')
 
-      log('info', 'Saving bills')
+      log('debug', 'Saving bills')
       if (bills.length)
         await this.saveBills(bills, fields, {
           identifiers: 'amazon',
@@ -47,7 +47,7 @@ class AmazonKonnector extends CookieKonnector {
           )
           break
         }
-        log('info', `Saving bills for year ${year}`)
+        log('debug', `Saving bills for year ${year}`)
         const bills = await this.fetchPeriod(year)
 
         if (bills.length)
@@ -65,7 +65,7 @@ class AmazonKonnector extends CookieKonnector {
     }
   }
   async fetchPeriod(period) {
-    log('info', 'Fetching the list of orders')
+    log('debug', 'Fetching the list of orders')
     const $ = await this.request(orderUrl + `?orderFilter=${period}`)
     let commands = parseCommands($)
 
@@ -88,7 +88,7 @@ class AmazonKonnector extends CookieKonnector {
         (command.date || command.commandDate)
     )
 
-    log('info', 'Fetching details for each order')
+    log('debug', 'Fetching details for each order')
     const bills = await bluebird
       .map(commands, bill => this.fetchBillDetails(bill))
       .filter(Boolean)
@@ -130,12 +130,12 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async testSession() {
-    log('info', 'Testing session')
+    log('debug', 'Testing session')
     const $ = await this.request(orderUrl)
     const authType = detectAuthType($)
 
     if (authType === false) {
-      log('info', 'Session OK')
+      log('debug', 'Session OK')
       return $
     }
     log('warn', 'Session not OK')
@@ -143,7 +143,7 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async sendVerifyCode(code, formData, url = `${baseUrl}/ap/cvf/verify`) {
-    log('info', 'Sending verification code to amazon')
+    log('debug', 'Sending verification code to amazon')
     try {
       if (!formData) formData = { ...this.getAccountData().codeFormData, code }
       const $ = await this.request.post(url, {
@@ -159,7 +159,7 @@ class AmazonKonnector extends CookieKonnector {
       })
       return $
     } catch (err) {
-      log('info', 'error while sending verify code')
+      log('warn', 'error while sending verify code')
       log('error', err.message.substr(0, 60))
       throw errors.VENDOR_DOWN
     }
@@ -175,11 +175,11 @@ class AmazonKonnector extends CookieKonnector {
     if (options.includes('email')) {
       chosenOption = { option: 'email' }
     }
-    log('info', `Chose option ${JSON.stringify(chosenOption)}`)
+    log('debug', `Chose option ${JSON.stringify(chosenOption)}`)
 
     if (process.env.COZY_JOB_MANUAL_EXECUTION !== 'true') {
       log(
-        'warn',
+        'debug',
         `this in not a manual execution. It is not possible to handle 2FA here.`
       )
       throw new Error('USER_ACTION_NEEDED.TWOFA_EXPIRED')
@@ -225,7 +225,7 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async submitMfaForm($, fields) {
-    log('info', 'Requiring otp...')
+    log('debug', 'Requiring otp...')
 
     const formData = getFormData($('#auth-mfa-form'))
     formData.rememberDevice = ''
@@ -277,10 +277,10 @@ class AmazonKonnector extends CookieKonnector {
   async authenticate(fields) {
     await this.deactivateAutoSuccessfulLogin()
 
-    log('info', 'Authenticating ...')
+    log('debug', 'Authenticating ...')
     if (fields.pin_code && fields.pin_code.length > 1) {
       log(
-        'info',
+        'debug',
         'We are in standalone mode and I found a code. Sending it directly'
       )
       return this.sendVerifyCode(fields.pin_code)
@@ -327,8 +327,8 @@ class AmazonKonnector extends CookieKonnector {
     }
 
     if (!(await this.testSession())) {
-      log('info', `Wrong session even after ${maxAuthenticationSteps} tries`)
-      log('info', `authType = ${authType}`)
+      log('debug', `Wrong session even after ${maxAuthenticationSteps} tries`)
+      log('debug', `authType = ${authType}`)
 
       throw new Error(errors.LOGIN_FAILED)
     }
@@ -338,13 +338,13 @@ class AmazonKonnector extends CookieKonnector {
   async checkFileContent(fileDocument) {
     try {
       log(
-        'info',
+        'debug',
         `checking file content for file ${fileDocument.attributes.name}`
       )
       const pdfContent = await utils.getPdfText(fileDocument._id, {
         pages: [1]
       })
-      log('info', `got content of length ${pdfContent.text.length}`)
+      log('debug', `got content of length ${pdfContent.text.length}`)
       return true
     } catch (err) {
       log('warn', `wrong file content for file ${fileDocument.attributes.name}`)
