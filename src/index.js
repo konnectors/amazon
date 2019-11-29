@@ -22,8 +22,7 @@ class AmazonKonnector extends CookieKonnector {
     try {
       if (!(await this.testSession())) {
         await this.authenticate(fields)
-        log('info', 'Setting LOGIN_SUCCESS')
-        await this.setState('LOGIN_SUCCESS')
+        await this.notifySuccessfulLogin()
       }
 
       const bills = await this.fetchPeriod('months-6')
@@ -276,8 +275,8 @@ class AmazonKonnector extends CookieKonnector {
   }
 
   async authenticate(fields) {
-    log('info', 'Setting HANDLE_LOGIN_SUCCESS')
-    await this.setState('HANDLE_LOGIN_SUCCESS')
+    await this.deactivateAutoSuccessfulLogin()
+
     log('info', 'Authenticating ...')
     if (fields.pin_code && fields.pin_code.length > 1) {
       log(
