@@ -1,11 +1,10 @@
 language: node_js
 node_js:
-- '8'
+- '12'
 env:
   global:
-  - MATTERMOST_CHANNEL="teamconnecteurs"
   - DEPLOY_REPOSITORY="git@github.com:konnectors/amazon.git"
-  # REGISTRY_TOKEN
+  # REGISTRY_TOKEN(editor=cozy, app=amazon)
   - secure: quk38q8jOC2ly8RDzrHKw5z7H5C1fe0dDTaGWLwjZlyl01+1gBZTkWXE/EMV8/Oj7VG8HxEmHf/gZowKHcM6xEcA5Yj372wYUOyR5nJoOz2M7HtIcIJ7ApOZxyKVB/L6+f2e21fEPlZdcRMHNgCMtIi3DKPaH//KHImqIBhUY3KNYAhGQPrO+dl9DXbW4Fki5GzWpFCeBGvkgoKL9gLnXnrlBDf5kbJlN/mvgbJ3savFaJodeGowXrlCdS8SmJmsiuh1OIkO1gQEzwsoHDHO22GHKxHREi+wqTrw/dRxNXg9r2zB0mbbbxisOPi6r4ScuPYGAVF4Ci0AnZPOdrS3w0z0KDJkfeNEUdw6g6u8KqHoP1/vz4AP6+UCbMCE8C45PKlQ7EF6GFT5rnyKGB/SguHV93yrXIm45V+4SqZxYgy2HvzzxMU1BNvTnwPaMH2jypwRPHqboMGMt/aLyyYl+35rbAz1X2w77eJnexYH4MBqJJB2UkO6psqARUN+rAz4X5Xqf6bNZerMsNOdJ11XQakjAhdtdqDlmY9oAXUaZbMiDgLS2I8G17bH+Pq3mgTxIA0asd/5QqPpoPXlAuEGbniwNV+LP5pzIiGR60lONcQmW0DYZVoJycmn02PAZak/bLq2LrCSKvTcZq6hQVM1Ue+aWPbV0ASuMPRD5oLiHc8=
   # MATTERMOST_HOOK_URL
   - secure: HDBSJxHDe36mE8+Na9TnK3OjgUl/HFfjDWLtCnEVxDjUAkftNYkbIkxiMRY5IgFOZV21O5scN62eUTy+DGeyiVys9eJtlYz/h8kYUq/8GD5fkXdSwLrVwPjqelW1v2jj+WJqq5CnMW7hMNYtNuwPDMhePgR/Ly2WblwXhgrhpIiSiU9u7Uz94UA2EK722tKjFxMMHFh6YzKc4+tMicaPhht6L72aIFmym3wbKho/8XOo0XysVA9J454qgjNnz5bDPeYQmRqRc9WRna5c6uNCmidVy/FaTLiu1/d2EgFYAdK7oZ/pIukIYY4Kyc/wMMcLjsp2UMGrHOk+TZTWMaOP2Wu3R8pN62umLnAQsx/idhVrAE5CCNxk/EFaj2gOoWITRvrpOh2Des3MDK8Vy7s6Cp0SYU+sa4cWZCQg0BcLXB+KwmujMKU0r7JVOrEJdjJLdnvDznmWbe+Hmk0N9GMbMfayvDmFYZOq8fPa7jKg+yZK9GmCSB5V16zELT0BZMVGA5gLNdWjDjudiWsjTsxaV08lojVktpqwveVNgpsEyWLozcCOvD08xAmxJEsEM18P89xD09Tuc3z837OYXJ9l0VuufrpsRX+HT2nnIjho8Pw7Cy12h/gOeX6qc1ZADuSnRyCtob3gTSbrylag1h1UBzAAbhmu2Ivz+rMYeTWUAnY=
@@ -18,12 +17,8 @@ branches:
   - build
   - build-debug
 script:
-- echo 'Linting' && echo -en 'travis_fold:start:lint\\r'
 - yarn lint
-- echo -en 'travis_fold:end:lint\\r'
-- echo 'Building' && echo -en 'travis_fold:start:build\\r'
 - yarn build
-- echo -en 'travis_fold:end:build\\r'
 deploy:
 - provider: script
   skip-cleanup: true
