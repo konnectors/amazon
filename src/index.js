@@ -36,7 +36,8 @@ class AmazonKonnector extends CookieKonnector {
           retry: 3,
           contentType: 'application/pdf',
           sourceAccountIdentifier: fields.email,
-          fileIdAttributes: ['vendorRef']
+          fileIdAttributes: ['vendorRef'],
+          linkBankOperations: false
         })
 
       // now digg in the past
@@ -60,7 +61,8 @@ class AmazonKonnector extends CookieKonnector {
             retry: 3,
             contentType: 'application/pdf',
             sourceAccountIdentifier: fields.email,
-            fileIdAttributes: ['vendorRef']
+            fileIdAttributes: ['vendorRef'],
+            linkBankOperations: false
           })
       }
     } catch (err) {
