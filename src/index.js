@@ -225,7 +225,8 @@ class AmazonKonnector extends CookieKonnector {
       validate: (statusCode, $) => {
         last$ = $
         return true
-      }
+      },
+      notifySuccessfulLogin: false
     })
     return last$
   }
