@@ -54,7 +54,7 @@
   "locales": {
     "fr": {
       "short_description": "Récupère vos factures",
-      "long_description": "Récupère vos factures Amazon.fr<p>A noter : Certaines commandes ne possèdent pas de factures, aucun document ne sera téléchargé pour celles-ci</p>",
+      "long_description": "Récupère vos factures Amazon.fr<p>Il se peut que vous ayez à saisir un code de double authentification envoyé par mail ou SMS. Attendez bien la confirmation avant de changer de page</p><p>A noter : Certaines commandes ne possèdent pas de factures, aucun document ne sera téléchargé pour celles-ci</p>",
       "permissions": {
         "bank operations": {
           "description": "Utilisé pour relier les factures à des operations bancaires"
