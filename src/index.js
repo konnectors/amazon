@@ -129,7 +129,6 @@ class AmazonKonnector extends CookieKonnector {
     await this.saveBills(PDFBills, fields, {
       identifiers: 'amazon',
       keys: ['vendorRef'],
-      validateFileContent: this.checkFileContent,
       retry: 3,
       contentType: 'application/pdf',
       sourceAccountIdentifier: fields.email,
@@ -353,23 +352,6 @@ class AmazonKonnector extends CookieKonnector {
       throw new Error(errors.LOGIN_FAILED)
     }
     return this.saveSession()
-  }
-
-  async checkFileContent(fileDocument) {
-    try {
-      log(
-        'debug',
-        `checking file content for file ${fileDocument.attributes.name}`
-      )
-      const pdfContent = await utils.getPdfText(fileDocument._id, {
-        pages: [1]
-      })
-      log('debug', `got content of length ${pdfContent.text.length}`)
-      return true
-    } catch (err) {
-      log('warn', `wrong file content for file ${fileDocument.attributes.name}`)
-      return false
-    }
   }
 
   async setState(state) {
