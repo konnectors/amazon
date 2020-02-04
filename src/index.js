@@ -28,17 +28,7 @@ class AmazonKonnector extends CookieKonnector {
       const bills = await this.fetchPeriod('months-6')
 
       log('debug', 'Saving bills')
-      if (bills.length)
-        await this.saveBills(bills, fields, {
-          identifiers: 'amazon',
-          keys: ['vendorRef'],
-          validateFileContent: this.checkFileContent,
-          retry: 3,
-          contentType: 'application/pdf',
-          sourceAccountIdentifier: fields.email,
-          fileIdAttributes: ['vendorRef'],
-          linkBankOperations: false
-        })
+      if (bills.length) await this.mixedSaveBills.bind(this)(bills, fields)
 
       // now digg in the past
       const years = await this.fetchYears()
@@ -53,17 +43,7 @@ class AmazonKonnector extends CookieKonnector {
         log('debug', `Saving bills for year ${year}`)
         const bills = await this.fetchPeriod(year)
 
-        if (bills.length)
-          await this.saveBills(bills, fields, {
-            identifiers: 'amazon',
-            keys: ['vendorRef'],
-            validateFileContent: this.checkFileContent,
-            retry: 3,
-            contentType: 'application/pdf',
-            sourceAccountIdentifier: fields.email,
-            fileIdAttributes: ['vendorRef'],
-            linkBankOperations: false
-          })
+        if (bills.length) await this.mixedSaveBills.bind(this)(bills, fields)
       }
     } catch (err) {
       log('error', err.message.substring(0, 60))
@@ -114,10 +94,16 @@ class AmazonKonnector extends CookieKonnector {
       const $ = await this.request(baseUrl + bill.detailsUrl)
       const { amount, date, commandDate, vendorRef, currency } = bill
       const finalDate = date || commandDate
-      const details = extractBillDetails($('ul'))
+      let details = extractBillDetails($('ul'))
       let filename = `${utils.formatDate(finalDate)}_amazon_${amount.toFixed(
         2
-      )}${currency}_${vendorRef}.pdf`
+      )}${currency}_${vendorRef}`
+      if (details.isHtml) {
+        filename += '.html'
+        delete details.isHtml
+      } else {
+        filename += '.pdf'
+      }
       return {
         amount,
         date: finalDate,
@@ -133,6 +119,31 @@ class AmazonKonnector extends CookieKonnector {
       )
       return false
     }
+  }
+
+  async mixedSaveBills(bills, fields) {
+    const PDFBills = bills.filter(bill => bill.filename.match(/.pdf$/))
+    const HTMLBills = bills.filter(bill => bill.filename.match(/.html$/))
+
+    log('debug', `Passing ${PDFBills.length} PDF bills`)
+    await this.saveBills(PDFBills, fields, {
+      identifiers: 'amazon',
+      keys: ['vendorRef'],
+      retry: 3,
+      contentType: 'application/pdf',
+      sourceAccountIdentifier: fields.email,
+      fileIdAttributes: ['vendorRef'],
+      linkBankOperations: false
+    })
+    log('debug', `Passing ${HTMLBills.length} HTML bills`)
+    await this.saveBills(HTMLBills, fields, {
+      identifiers: 'amazon',
+      keys: ['vendorRef'],
+      contentType: 'text/html',
+      sourceAccountIdentifier: fields.email,
+      fileIdAttributes: ['vendorRef'],
+      linkBankOperations: false
+    })
   }
 
   async testSession() {
@@ -184,6 +195,7 @@ class AmazonKonnector extends CookieKonnector {
     log('debug', `Chose option ${JSON.stringify(chosenOption)}`)
 
     if (process.env.COZY_JOB_MANUAL_EXECUTION !== 'true') {
+      // Probably need to avoid that if standalone mode, todo later
       log(
         'debug',
         `this in not a manual execution. It is not possible to handle 2FA here.`
@@ -340,23 +352,6 @@ class AmazonKonnector extends CookieKonnector {
       throw new Error(errors.LOGIN_FAILED)
     }
     return this.saveSession()
-  }
-
-  async checkFileContent(fileDocument) {
-    try {
-      log(
-        'debug',
-        `checking file content for file ${fileDocument.attributes.name}`
-      )
-      const pdfContent = await utils.getPdfText(fileDocument._id, {
-        pages: [1]
-      })
-      log('debug', `got content of length ${pdfContent.text.length}`)
-      return true
-    } catch (err) {
-      log('warn', `wrong file content for file ${fileDocument.attributes.name}`)
-      return false
-    }
   }
 
   async setState(state) {
