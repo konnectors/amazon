@@ -66,6 +66,12 @@ class AmazonKonnector extends CookieKonnector {
       )
     }
 
+    for (const command of commands) {
+      if (command.shipmentMessage) {
+        log('info', `Shipment: ${command.shipmentMessage}`)
+      }
+    }
+
     commands = commands.filter(
       command =>
         command.vendorRef &&
