@@ -70,7 +70,6 @@ class AmazonKonnector extends CookieKonnector {
       command =>
         command.vendorRef &&
         command.detailsUrl &&
-        !command.shipmentMessage &&
         (command.date || command.commandDate)
     )
 
