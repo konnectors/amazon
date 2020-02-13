@@ -50,12 +50,13 @@ class AmazonKonnector extends CookieKonnector {
       throw err
     }
   }
+
   async fetchPeriod(period) {
     log('debug', 'Fetching the list of orders')
     const $ = await this.request(orderUrl + `?orderFilter=${period}`)
     let commands = parseCommands($)
 
-    // is there a pager ?
+    // Searching if a pager is present (more bills available)
     const $morePages = $('.a-pagination .a-normal')
     for (const page of Array.from($morePages)) {
       const url = $(page)
@@ -155,8 +156,9 @@ class AmazonKonnector extends CookieKonnector {
     log('debug', 'Testing session')
     const $ = await this.request(orderUrl)
     const authType = detectAuthType($)
-
-    if (authType === false) {
+    if (authType === false // No Auth form detected on page
+        && $('#ordersContainer') != '' // No order block present
+       ) {
       log('debug', 'Session OK')
       return $
     }
@@ -303,6 +305,7 @@ class AmazonKonnector extends CookieKonnector {
 
     log('debug', 'Authenticating ...')
     if (fields.pin_code && fields.pin_code.length > 1) {
+      // pin_code can be add as a string "pin_code": "0123456" in standalone
       log(
         'debug',
         'We are in standalone mode and I found a code. Sending it directly'
