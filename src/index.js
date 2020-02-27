@@ -156,9 +156,11 @@ class AmazonKonnector extends CookieKonnector {
     log('debug', 'Testing session')
     const $ = await this.request(orderUrl)
     const authType = detectAuthType($)
-    if (authType === false // No Auth form detected on page
-        && $('#ordersContainer') != '' // No order block present
-       ) {
+    if (
+      authType === false && // No Auth form detected on page
+      ($('#ordersContainer') != '' || $('#yourOrdersBannersContainer') != '')
+      // No order block present
+    ) {
       log('debug', 'Session OK')
       return $
     }
