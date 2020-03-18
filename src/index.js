@@ -159,7 +159,6 @@ class AmazonKonnector extends CookieKonnector {
     if (
       authType === false && // No Auth form detected on page
       ($('#ordersContainer') != '' || $('#yourOrdersBannersContainer') != '')
-      // No order block present
     ) {
       log('debug', 'Session OK')
       return $
