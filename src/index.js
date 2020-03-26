@@ -226,7 +226,11 @@ class AmazonKonnector extends CookieKonnector {
     if (process.env.NODE_ENV === 'standalone') {
       throw new Error('errors.CHALLENGE_ASKED.EMAIL')
     } else {
-      const code = await this.waitForTwoFaCode()
+      const twoFaOptions = {}
+      if (chosenOption) {
+        twoFaOptions.type = chosenOption.option
+      }
+      const code = await this.waitForTwoFaCode(twoFaOptions)
       const result = await this.sendVerifyCode(code)
       return result
     }
