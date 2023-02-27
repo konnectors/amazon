@@ -1,10 +1,8 @@
-/* eslint-disable spaced-comment */
-/* eslint-disable prettier/prettier */
 import { ContentScript } from 'cozy-clisk/dist/contentscript'
 import ky from 'ky'
-import {format} from 'date-fns'
+import { format } from 'date-fns'
 import Minilog from '@cozy/minilog'
-import {parseCommands} from './scraping'
+import { parseCommands } from './scraping'
 
 const log = Minilog('ContentScript')
 Minilog.enable()
@@ -14,18 +12,17 @@ const orderUrl = `${baseUrl}/gp/your-account/order-history`
 const vendor = 'amazon'
 
 class AmazonContentScript extends ContentScript {
-
-  //P
+  // P
   async ensureAuthenticated() {
     this.log('Starting ensureAuth')
     await this.bridge.call('setWorkerState', {
       url: baseUrl,
-      visible: false,
+      visible: false
     })
 
     await this.waitForElementInWorker('#nav-progressive-greeting')
     const authenticated = await this.runInWorker('checkAuthenticated')
-    this.log('Authenticated : '+authenticated)
+    this.log('Authenticated : ' + authenticated)
 
     if (authenticated) {
       return true
@@ -50,14 +47,14 @@ class AmazonContentScript extends ContentScript {
     return true
   }
 
-  //W
+  // W
   async checkAuthenticated() {
     const result = Boolean(document.querySelector('#nav-greeting-name'))
-    this.log('Authentification detection : '+result)
+    this.log('Authentification detection : ' + result)
     return result
   }
 
-  //P
+  // P
   async tryAutoLogin(credentials) {
     // Bring login form via main page
     await this.bridge.call('setWorkerState', {
@@ -65,10 +62,7 @@ class AmazonContentScript extends ContentScript {
       visible: false
     })
     await this.waitForElementInWorker('a[id="nav-logobar-greeting"]')
-    await this.clickAndWait(
-      'a[id="nav-logobar-greeting"]',
-      '#ap_email_login'
-    )
+    await this.clickAndWait('a[id="nav-logobar-greeting"]', '#ap_email_login')
     // Enter login
     const emailFieldSelector = '#ap_email_login'
     await this.runInWorker('fillText', emailFieldSelector, credentials.email)
@@ -76,8 +70,8 @@ class AmazonContentScript extends ContentScript {
     // Click continue
     // Watch out: multiples input#continue buttons
     await this.clickAndWait(
-      'input#continue[aria-labelledby="continue-announce"]'
-,      '[name="rememberMe"]'
+      'input#continue[aria-labelledby="continue-announce"]',
+      '[name="rememberMe"]'
     )
 
     // Enter password
@@ -92,7 +86,7 @@ class AmazonContentScript extends ContentScript {
     await this.runInWorker('click', loginButtonSelector)
   }
 
-  //W
+  // W
   findAndSendCredentials() {
     const emailField = document.querySelector('#ap_email_login')
     const passwordField = document.querySelector('#ap_password')
@@ -110,18 +104,15 @@ class AmazonContentScript extends ContentScript {
     return true
   }
 
-  //P
+  // P
   async showLoginFormAndWaitForAuthentication() {
     this.log('showLoginFormAndWaitForAuthentication start')
     await this.bridge.call('setWorkerState', {
       url: baseUrl,
-      visible: false,
+      visible: false
     })
     await this.waitForElementInWorker('a[id="nav-logobar-greeting"]')
-    await this.clickAndWait(
-      'a[id="nav-logobar-greeting"]',
-      '#ap_email_login'
-    )
+    await this.clickAndWait('a[id="nav-logobar-greeting"]', '#ap_email_login')
 
     await this.bridge.call('setWorkerState', {
       visible: true
@@ -133,13 +124,13 @@ class AmazonContentScript extends ContentScript {
     await this.runInWorker('checkingBox')
 
     await this.runInWorker('setListenerPassword')
-    await this.runInWorkerUntilTrue({method: 'waitForAuthenticated'})
+    await this.runInWorkerUntilTrue({ method: 'waitForAuthenticated' })
     await this.bridge.call('setWorkerState', {
-      visible: false,
+      visible: false
     })
   }
 
-  //W
+  // W
   async setListenerLogin() {
     const loginField = document.querySelector('#ap_email_login')
     if (loginField) {
@@ -150,7 +141,7 @@ class AmazonContentScript extends ContentScript {
     }
   }
 
-  //W
+  // W
   async setListenerPassword() {
     const passwordField = document.querySelector('#ap_password')
     if (passwordField) {
@@ -161,7 +152,7 @@ class AmazonContentScript extends ContentScript {
     }
   }
 
-  //W
+  // W
   async checkingBox() {
     const checkbox = document.querySelector('[name="rememberMe"]')
     // Checking the 'Stay connected' checkbox when loaded
@@ -171,16 +162,15 @@ class AmazonContentScript extends ContentScript {
     }
   }
 
-
-  //P
+  // P
   async fetch(context) {
     await this.bridge.call(
       'setUserAgent',
-      'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0',
+      'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
     )
 
     const bills = await this.fetchPeriod('months-3')
-    await this.saveBills(bills, {contentType: 'application/pdf'}, context)
+    await this.saveBills(bills, { contentType: 'application/pdf' }, context)
 
     await this.clickAndWait(
       "a.hmenu-item[href*='order-history']",
@@ -194,33 +184,32 @@ class AmazonContentScript extends ContentScript {
       const periodBills = await this.fetchPeriod(year)
       await this.saveBills(
         periodBills,
-        {contentType: 'application/pdf'},
-        context,
+        { contentType: 'application/pdf' },
+        context
       )
     }
   }
 
-  //W
+  // W
   async getYears() {
-    return Array
-      .from(document.querySelectorAll("[name='orderFilter'] option"))
-      .map((el) => el.value)
-      .filter((period) => period.includes('year'))
+    return Array.from(document.querySelectorAll("[name='orderFilter'] option"))
+      .map(el => el.value)
+      .filter(period => period.includes('year'))
   }
 
   async fetchPeriod(period) {
     this.log('Fetching the list of orders for period ' + period)
     const resp = await ky.get(
-      orderUrl + `?orderFilter=${period}&disableCsd=missing-library`,
+      orderUrl + `?orderFilter=${period}&disableCsd=missing-library`
     )
     let commands = await parseCommands(resp)
 
     commands = commands.filter(
-      (command) =>
+      command =>
         command.vendorRef &&
         command.detailsUrl &&
         command.commandDate &&
-        command.amount,
+        command.amount
     )
 
     for (const bill of commands) {
@@ -232,13 +221,13 @@ class AmazonContentScript extends ContentScript {
         bill.fileurl = baseUrl + normalInvoice.attr('href')
         bill.filename = `${format(
           bill.commandDate,
-          'yyyy-MM-dd',
+          'yyyy-MM-dd'
         )}_amazon_${bill.amount.toFixed(2)}${bill.currency}_${
           bill.vendorRef
         }.pdf`
       } else {
         log.warn(
-          `Could not find a file for bill ${bill.vendorRef} from ${bill.commandDate}`,
+          `Could not find a file for bill ${bill.vendorRef} from ${bill.commandDate}`
         )
       }
     }
@@ -246,9 +235,8 @@ class AmazonContentScript extends ContentScript {
     return commands
   }
 
-  //P
+  // P
   async getUserDataFromWebsite() {
-
     if (this.store && this.store.email) {
       return {
         sourceAccountIdentifier: this.store.email
@@ -268,13 +256,14 @@ class AmazonContentScript extends ContentScript {
 
 const connector = new AmazonContentScript()
 connector
-  .init({additionalExposedMethodsNames: [
-    'getYears',
-    'checkingBox',
-    'setListenerLogin',
-    'setListenerPassword'
-  ]
-        })
-  .catch((err) => {
+  .init({
+    additionalExposedMethodsNames: [
+      'getYears',
+      'checkingBox',
+      'setListenerLogin',
+      'setListenerPassword'
+    ]
+  })
+  .catch(err => {
     log.warn(err)
   })
