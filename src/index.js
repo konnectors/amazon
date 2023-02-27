@@ -1,5 +1,7 @@
-import ContentScript from '../../connectorLibs/ContentScript'
-import {kyScraper as ky} from '../../connectorLibs/utils'
+/* eslint-disable spaced-comment */
+/* eslint-disable prettier/prettier */
+import { ContentScript } from 'cozy-clisk/dist/contentscript'
+import ky from 'ky'
 import {format} from 'date-fns'
 import Minilog from '@cozy/minilog'
 import {parseCommands} from './scraping'
@@ -91,7 +93,7 @@ class AmazonContentScript extends ContentScript {
   }
 
   //W
-  findAndSendCredentials(e) {
+  findAndSendCredentials() {
     const emailField = document.querySelector('#ap_email_login')
     const passwordField = document.querySelector('#ap_password')
     this.log('Executing findAndSendCredentials')
@@ -274,5 +276,5 @@ connector
   ]
         })
   .catch((err) => {
-    console.warn(err)
+    log.warn(err)
   })
