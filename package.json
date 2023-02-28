@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@cozy/minilog": "^1.0.0",
+    "cheerio": "^1.0.0-rc.12",
     "cozy-clisk": "^0.7.0",
     "date-fns": "^2.29.3",
     "ky": "^0.33.2"

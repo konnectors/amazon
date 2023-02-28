@@ -1,5 +1,5 @@
 import { ContentScript } from 'cozy-clisk/dist/contentscript'
-import ky from 'ky'
+import { kyScraper as ky } from './utils'
 import { format } from 'date-fns'
 import Minilog from '@cozy/minilog'
 import { parseCommands } from './scraping'
@@ -168,7 +168,6 @@ class AmazonContentScript extends ContentScript {
       'setUserAgent',
       'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
     )
-
     const bills = await this.fetchPeriod('months-3')
     await this.saveBills(bills, { contentType: 'application/pdf' }, context)
 
