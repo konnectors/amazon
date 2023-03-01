@@ -23,7 +23,6 @@ class AmazonContentScript extends ContentScript {
     await this.waitForElementInWorker('#nav-progressive-greeting')
     const authenticated = await this.runInWorker('checkAuthenticated')
     this.log('Authenticated : ' + authenticated)
-
     if (authenticated) {
       return true
     } else {
@@ -175,7 +174,6 @@ class AmazonContentScript extends ContentScript {
       "a.hmenu-item[href*='order-history']",
       "[name='orderFilter']"
     )
-
     const years = await this.runInWorker('getYears')
     this.log('Years :' + years)
     for (const year of years) {
@@ -202,7 +200,6 @@ class AmazonContentScript extends ContentScript {
       orderUrl + `?orderFilter=${period}&disableCsd=missing-library`
     )
     let commands = await parseCommands(resp)
-
     commands = commands.filter(
       command =>
         command.vendorRef &&
@@ -218,12 +215,13 @@ class AmazonContentScript extends ContentScript {
       if (normalInvoice.length) {
         bill.vendor = vendor
         bill.fileurl = baseUrl + normalInvoice.attr('href')
-        bill.filename = `${format(
+        ;(bill.filename = `${format(
           bill.commandDate,
           'yyyy-MM-dd'
         )}_amazon_${bill.amount.toFixed(2)}${bill.currency}_${
           bill.vendorRef
-        }.pdf`
+        }.pdf`),
+          (bill.date = bill.commandDate)
       } else {
         log.warn(
           `Could not find a file for bill ${bill.vendorRef} from ${bill.commandDate}`

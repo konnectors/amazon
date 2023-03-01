@@ -22,7 +22,7 @@ const commandParser = {
     parse: parseCommandDate
   },
   vendorRef: {
-    sel: "a[href*='order-details'],a[href*='order-summary']",
+    sel: 'a[href*="order-details"],a[href*="order-summary"]',
     attr: 'href',
     parse: href => {
       if (!href) {
@@ -32,7 +32,7 @@ const commandParser = {
     }
   },
   detailsUrl: {
-    sel: "a[href*='order-details'],a[href*='order-summary']",
+    sel: 'a[href*="order-details"],a[href*="order-summary"]',
     fn: $ => {
       const json = $.closest('ul')
         .find('[data-a-popover]')
@@ -48,13 +48,25 @@ const commandParser = {
 }
 
 export const parseCommands = resp => resp.scrape(commandParser, '.order')
+// export async function parseCommands(resp) {
+//   const result = await resp.scrape(commandParser, '.order')
+//   console.log('resultParsing', result)
+//   return result
+// }
 
 function parseAmount(amount) {
-  return parseFloat(amount.split(' ').pop().replace(',', '.'))
+  return parseFloat(
+    amount
+      .split(' ')
+      .pop()
+      .replace(',', '.')
+      .trim()
+      .match(/([0-9.]*)/g)[1]
+  )
 }
 
 function parseCurrency(amount) {
-  return amount.split(' ')[0]
+  return amount.match(/€|$|£/)[0]
 }
 
 function parseCommandDate(date) {
