@@ -14,7 +14,7 @@ const vendor = 'amazon'
 class AmazonContentScript extends ContentScript {
   // P
   async ensureAuthenticated() {
-    this.log('Starting ensureAuth')
+    this.log('info', 'Starting ensureAuth')
     await this.bridge.call('setWorkerState', {
       url: baseUrl,
       visible: false
@@ -22,24 +22,23 @@ class AmazonContentScript extends ContentScript {
 
     await this.waitForElementInWorker('#nav-progressive-greeting')
     const authenticated = await this.runInWorker('checkAuthenticated')
-    this.log('Authenticated : ' + authenticated)
+    this.log('debug', 'Authenticated : ' + authenticated)
     if (authenticated) {
       return true
     } else {
       let credentials = await this.getCredentials()
       if (credentials && credentials.email && credentials.password) {
         try {
-          this.log('Got credentials, trying autologin')
+          this.log('info', 'Got credentials, trying autologin')
           await this.tryAutoLogin(credentials)
         } catch (err) {
-          this.log('autoLogin error' + err.message)
+          this.log('debug', 'autoLogin error' + err.message)
           await this.showLoginFormAndWaitForAuthentication()
         }
       } else {
         await this.showLoginFormAndWaitForAuthentication()
       }
       if (this.store && (this.store.email || this.store.password)) {
-        this.log(JSON.stringify(this.store))
         await this.saveCredentials(this.store)
       }
     }
@@ -49,7 +48,7 @@ class AmazonContentScript extends ContentScript {
   // W
   async checkAuthenticated() {
     const result = Boolean(document.querySelector('#nav-greeting-name'))
-    this.log('Authentification detection : ' + result)
+    this.log('debug', 'Authentification detection : ' + result)
     return result
   }
 
@@ -89,7 +88,7 @@ class AmazonContentScript extends ContentScript {
   findAndSendCredentials() {
     const emailField = document.querySelector('#ap_email_login')
     const passwordField = document.querySelector('#ap_password')
-    this.log('Executing findAndSendCredentials')
+    this.log('debug', 'Executing findAndSendCredentials')
     if (emailField) {
       this.sendToPilot({
         email: emailField.value
@@ -105,7 +104,7 @@ class AmazonContentScript extends ContentScript {
 
   // P
   async showLoginFormAndWaitForAuthentication() {
-    this.log('showLoginFormAndWaitForAuthentication start')
+    this.log('info', 'showLoginFormAndWaitForAuthentication start')
     await this.bridge.call('setWorkerState', {
       url: baseUrl,
       visible: false
@@ -117,7 +116,7 @@ class AmazonContentScript extends ContentScript {
       visible: true
     })
 
-    this.log('Waiting on login form')
+    this.log('debug', 'Waiting on login form')
     await this.runInWorker('setListenerLogin')
     await this.waitForElementInWorker('[name="rememberMe"]')
     await this.runInWorker('checkingBox')
@@ -156,7 +155,7 @@ class AmazonContentScript extends ContentScript {
     const checkbox = document.querySelector('[name="rememberMe"]')
     // Checking the 'Stay connected' checkbox when loaded
     if (checkbox.checked == false) {
-      this.log('Checking the RememberMe box')
+      this.log('debug', 'Checking the RememberMe box')
       checkbox.click()
     }
   }
@@ -169,15 +168,11 @@ class AmazonContentScript extends ContentScript {
     )
     const bills = await this.fetchPeriod('months-3')
     await this.saveBills(bills, { contentType: 'application/pdf' }, context)
-
-    await this.clickAndWait(
-      "a.hmenu-item[href*='order-history']",
-      "[name='orderFilter']"
-    )
+    await this.clickAndWait('#nav_prefetch_yourorders', "[name='orderFilter']")
     const years = await this.runInWorker('getYears')
-    this.log('Years :' + years)
+    this.log('debug', 'Years :' + years)
     for (const year of years) {
-      this.log('Saving year ' + year)
+      this.log('debug', 'Saving year ' + year)
       const periodBills = await this.fetchPeriod(year)
       await this.saveBills(
         periodBills,
@@ -195,7 +190,7 @@ class AmazonContentScript extends ContentScript {
   }
 
   async fetchPeriod(period) {
-    this.log('Fetching the list of orders for period ' + period)
+    this.log('debug', 'Fetching the list of orders for period ' + period)
     const resp = await ky.get(
       orderUrl + `?orderFilter=${period}&disableCsd=missing-library`
     )
@@ -221,7 +216,15 @@ class AmazonContentScript extends ContentScript {
         )}_amazon_${bill.amount.toFixed(2)}${bill.currency}_${
           bill.vendorRef
         }.pdf`),
-          (bill.date = bill.commandDate)
+          (bill.date = bill.commandDate),
+          (bill.fileAttributes = {
+            metadata: {
+              contentAuthor: 'amazon',
+              datetime: bill.commandDate,
+              datetimeLabel: 'issueDate',
+              carbonCopy: true
+            }
+          })
       } else {
         log.warn(
           `Could not find a file for bill ${bill.vendorRef} from ${bill.commandDate}`
@@ -245,7 +248,7 @@ class AmazonContentScript extends ContentScript {
           sourceAccountIdentifier: credentials.email
         }
       } else {
-        this.log('No credentials found')
+        this.log('debug', 'No credentials found')
       }
     }
   }
