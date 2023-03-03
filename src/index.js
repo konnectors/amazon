@@ -168,6 +168,7 @@ class AmazonContentScript extends ContentScript {
     )
     const bills = await this.fetchPeriod('months-3')
     await this.saveBills(bills, { contentType: 'application/pdf' }, context)
+    await this.waitForElementInWorker('#nav_prefetch_yourorders')
     await this.clickAndWait('#nav_prefetch_yourorders', "[name='orderFilter']")
     const years = await this.runInWorker('getYears')
     this.log('debug', 'Years :' + years)
