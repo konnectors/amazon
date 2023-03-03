@@ -1,9 +1,8 @@
-// scraps a given bill
-const { scrape, log } = require('cozy-konnector-libs')
-const moment = require('moment')
-const url = require('url')
-const qs = require('querystring')
-moment.locale('fr')
+import { parse } from 'date-fns'
+import { fr } from 'date-fns/locale'
+import Minilog from '@cozy/minilog'
+
+const log = Minilog('scraping')
 const baseUrl = 'https://www.amazon.fr'
 
 const commandParser = {
@@ -11,75 +10,49 @@ const commandParser = {
     sel: '.a-color-success'
   },
   amount: {
-    sel:
-      '.order-info .a-fixed-right-grid-inner > .a-col-left > .a-row > div:nth-child(2) .value',
+    sel: '.order-info .a-fixed-right-grid-inner > .a-col-left > .a-row > div:nth-child(2) .value',
     parse: parseAmount
   },
   currency: {
-    sel:
-      '.order-info .a-fixed-right-grid-inner > .a-col-left > .a-row > div:nth-child(2) .value',
+    sel: '.order-info .a-fixed-right-grid-inner > .a-col-left > .a-row > div:nth-child(2) .value',
     parse: parseCurrency
   },
-  date: {
-    sel: '.shipment-top-row > div > div:nth-child(1) > span',
-    parse: parseDate
-  },
   commandDate: {
-    sel:
-      '.order-info .a-fixed-right-grid-inner > .a-col-left > .a-row > div:nth-child(1) .value',
-    parse: date => moment(date, 'D MMMM YYYY').toDate()
+    sel: '.order-info .a-fixed-right-grid-inner > .a-col-left > .a-row > div:nth-child(1) .value',
+    parse: parseCommandDate
   },
   vendorRef: {
-    sel: `a[href*='order-details']`,
+    sel: 'a[href*="order-details"],a[href*="order-summary"]',
     attr: 'href',
-    parse: href => href && qs.parse(url.parse(href).query).orderID
+    parse: href => {
+      if (!href) {
+        return false
+      }
+      return new URL(baseUrl + href).searchParams.get('orderID')
+    }
   },
   detailsUrl: {
-    sel: `a[href*='order-details']`,
+    sel: 'a[href*="order-details"],a[href*="order-summary"]',
     fn: $ => {
       const json = $.closest('ul')
-        .find(`[data-a-popover]`)
+        .find('[data-a-popover]')
         .attr('data-a-popover')
       try {
         return JSON.parse(json).url
       } catch (err) {
-        log('warn', err.message)
+        log.warn(err.message)
         return false
       }
     }
   }
 }
 
-module.exports = {
-  parseCommands: $ => {
-    return scrape($, commandParser, '.order')
-  },
-  extractBillDetails: $ => {
-    const result = {
-      vendor: 'amazon'
-    }
-
-    const $newInvoice = $.find(`a[href*='generated_invoices_v2']`)
-    const $normalInvoice = $.find(`a[href*='invoice/download.html']`)
-    const $htmlInvoice = $.find(`a[href*='print.html']`)
-
-    if ($newInvoice.length) {
-      result.fileurl = $newInvoice.attr('href')
-    } else if ($normalInvoice.length) {
-      result.fileurl = baseUrl + $normalInvoice.attr('href')
-    } else if ($htmlInvoice.length) {
-      result.fileurl = baseUrl + $htmlInvoice.attr('href')
-      result.isHtml = true
-    } else {
-      log('warn', `Could not find a bill file`)
-    }
-
-    return result
-  },
-  extractMainBillInfo: $ => {
-    return scrape($, commandParser)
-  }
-}
+export const parseCommands = resp => resp.scrape(commandParser, '.order')
+// export async function parseCommands(resp) {
+//   const result = await resp.scrape(commandParser, '.order')
+//   console.log('resultParsing', result)
+//   return result
+// }
 
 function parseAmount(amount) {
   return parseFloat(
@@ -87,19 +60,16 @@ function parseAmount(amount) {
       .split(' ')
       .pop()
       .replace(',', '.')
+      .trim()
+      .match(/([0-9.]*)/g)[1]
   )
 }
 
 function parseCurrency(amount) {
-  return amount.split(' ')[0]
+  return amount.match(/€|$|£/)[0]
 }
 
-function parseDate(date) {
-  const dateStr = date
-    .split(' ')
-    .slice(2)
-    .join(' ')
-  const m = moment(dateStr, 'D MMM. YYYY')
-  if (!m.isValid()) return false
-  return m.toDate()
+function parseCommandDate(date) {
+  const result = parse(date, 'd MMMM u', new Date(), { locale: fr })
+  return result
 }

@@ -1,385 +1,270 @@
-process.env.SENTRY_DSN =
-  process.env.SENTRY_DSN ||
-  'https://9de2d294dead448ab73cbb1f67374b6c@sentry.cozycloud.cc/124'
-const {
-  CookieKonnector,
-  log,
-  errors,
-  utils,
-  solveCaptcha
-} = require('cozy-konnector-libs')
-const bluebird = require('bluebird')
+import { ContentScript } from 'cozy-clisk/dist/contentscript'
+import { kyScraper as ky } from './utils'
+import { format } from 'date-fns'
+import Minilog from '@cozy/minilog'
+import { parseCommands } from './scraping'
 
-const { parseCommands, extractBillDetails } = require('./scraping')
-const { getFormData, submitForm, detectAuthType } = require('./auth')
+const log = Minilog('ContentScript')
+Minilog.enable()
+
 const baseUrl = 'https://www.amazon.fr'
 const orderUrl = `${baseUrl}/gp/your-account/order-history`
+const vendor = 'amazon'
 
-const DEFAULT_TIMEOUT = Date.now() + 4 * 60 * 1000 // 4 minutes by default since the stack allows 5 minutes
+class AmazonContentScript extends ContentScript {
+  // P
+  async ensureAuthenticated() {
+    this.log('info', 'Starting ensureAuth')
+    await this.bridge.call('setWorkerState', {
+      url: baseUrl,
+      visible: false
+    })
 
-class AmazonKonnector extends CookieKonnector {
-  async fetch(fields) {
-    try {
-      if (!(await this.testSession())) {
-        await this.authenticate(fields)
-        await this.notifySuccessfulLogin()
-      }
-
-      const bills = await this.fetchPeriod('months-6')
-
-      log('debug', 'Saving bills')
-      if (bills.length) await this.mixedSaveBills.bind(this)(bills, fields)
-
-      // now digg in the past
-      const years = await this.fetchYears()
-      for (const year of years) {
-        if (Date.now() > DEFAULT_TIMEOUT) {
-          log(
-            'warn',
-            `Timeout reached in ${year}. Will digg in the past next time`
-          )
-          break
+    await this.waitForElementInWorker('#nav-progressive-greeting')
+    const authenticated = await this.runInWorker('checkAuthenticated')
+    this.log('debug', 'Authenticated : ' + authenticated)
+    if (authenticated) {
+      return true
+    } else {
+      let credentials = await this.getCredentials()
+      if (credentials && credentials.email && credentials.password) {
+        try {
+          this.log('info', 'Got credentials, trying autologin')
+          await this.tryAutoLogin(credentials)
+        } catch (err) {
+          this.log('debug', 'autoLogin error' + err.message)
+          await this.showLoginFormAndWaitForAuthentication()
         }
-        log('debug', `Saving bills for year ${year}`)
-        const bills = await this.fetchPeriod(year)
-
-        if (bills.length) await this.mixedSaveBills.bind(this)(bills, fields)
+      } else {
+        await this.showLoginFormAndWaitForAuthentication()
       }
-    } catch (err) {
-      log('error', err.message.substring(0, 60))
-      throw err
+      if (this.store && (this.store.email || this.store.password)) {
+        await this.saveCredentials(this.store)
+      }
+    }
+    return true
+  }
+
+  // W
+  async checkAuthenticated() {
+    const result = Boolean(document.querySelector('#nav-greeting-name'))
+    this.log('debug', 'Authentification detection : ' + result)
+    return result
+  }
+
+  // P
+  async tryAutoLogin(credentials) {
+    // Bring login form via main page
+    await this.bridge.call('setWorkerState', {
+      url: baseUrl,
+      visible: false
+    })
+    await this.waitForElementInWorker('a[id="nav-logobar-greeting"]')
+    await this.clickAndWait('a[id="nav-logobar-greeting"]', '#ap_email_login')
+    // Enter login
+    const emailFieldSelector = '#ap_email_login'
+    await this.runInWorker('fillText', emailFieldSelector, credentials.email)
+
+    // Click continue
+    // Watch out: multiples input#continue buttons
+    await this.clickAndWait(
+      'input#continue[aria-labelledby="continue-announce"]',
+      '[name="rememberMe"]'
+    )
+
+    // Enter password
+    const passFieldSelector = '#ap_password'
+    await this.runInWorker('fillText', passFieldSelector, credentials.password)
+
+    // Click check box
+    await this.runInWorker('checkingBox')
+
+    // Click Login
+    const loginButtonSelector = 'input#signInSubmit'
+    await this.runInWorker('click', loginButtonSelector)
+  }
+
+  // W
+  findAndSendCredentials() {
+    const emailField = document.querySelector('#ap_email_login')
+    const passwordField = document.querySelector('#ap_password')
+    this.log('debug', 'Executing findAndSendCredentials')
+    if (emailField) {
+      this.sendToPilot({
+        email: emailField.value
+      })
+    }
+    if (passwordField) {
+      this.sendToPilot({
+        password: passwordField.value
+      })
+    }
+    return true
+  }
+
+  // P
+  async showLoginFormAndWaitForAuthentication() {
+    this.log('info', 'showLoginFormAndWaitForAuthentication start')
+    await this.bridge.call('setWorkerState', {
+      url: baseUrl,
+      visible: false
+    })
+    await this.waitForElementInWorker('a[id="nav-logobar-greeting"]')
+    await this.clickAndWait('a[id="nav-logobar-greeting"]', '#ap_email_login')
+
+    await this.bridge.call('setWorkerState', {
+      visible: true
+    })
+
+    this.log('debug', 'Waiting on login form')
+    await this.runInWorker('setListenerLogin')
+    await this.waitForElementInWorker('[name="rememberMe"]')
+    await this.runInWorker('checkingBox')
+
+    await this.runInWorker('setListenerPassword')
+    await this.runInWorkerUntilTrue({ method: 'waitForAuthenticated' })
+    await this.bridge.call('setWorkerState', {
+      visible: false
+    })
+  }
+
+  // W
+  async setListenerLogin() {
+    const loginField = document.querySelector('#ap_email_login')
+    if (loginField) {
+      loginField.addEventListener(
+        'change',
+        this.findAndSendCredentials.bind(this)
+      )
     }
   }
 
-  async fetchPeriod(period) {
-    log('debug', 'Fetching the list of orders')
-    const $ = await this.request(orderUrl + `?orderFilter=${period}`)
-    let commands = parseCommands($)
-
-    // Searching if a pager is present (more bills available)
-    const $morePages = $('.a-pagination .a-normal')
-    for (const page of Array.from($morePages)) {
-      const url = $(page)
-        .find('a')
-        .attr('href')
-      commands = commands.concat(
-        parseCommands(await this.request(baseUrl + url))
+  // W
+  async setListenerPassword() {
+    const passwordField = document.querySelector('#ap_password')
+    if (passwordField) {
+      passwordField.addEventListener(
+        'change',
+        this.findAndSendCredentials.bind(this)
       )
     }
+  }
 
-    for (const command of commands) {
-      if (command.shipmentMessage) {
-        log('info', `Shipment: ${command.shipmentMessage}`)
-      }
+  // W
+  async checkingBox() {
+    const checkbox = document.querySelector('[name="rememberMe"]')
+    // Checking the 'Stay connected' checkbox when loaded
+    if (checkbox.checked == false) {
+      this.log('debug', 'Checking the RememberMe box')
+      checkbox.click()
     }
+  }
 
+  // P
+  async fetch(context) {
+    await this.bridge.call(
+      'setUserAgent',
+      'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
+    )
+    const bills = await this.fetchPeriod('months-3')
+    await this.saveBills(bills, { contentType: 'application/pdf' }, context)
+    await this.waitForElementInWorker('#nav_prefetch_yourorders')
+    await this.clickAndWait('#nav_prefetch_yourorders', "[name='orderFilter']")
+    const years = await this.runInWorker('getYears')
+    this.log('debug', 'Years :' + years)
+    for (const year of years) {
+      this.log('debug', 'Saving year ' + year)
+      const periodBills = await this.fetchPeriod(year)
+      await this.saveBills(
+        periodBills,
+        { contentType: 'application/pdf' },
+        context
+      )
+    }
+  }
+
+  // W
+  async getYears() {
+    return Array.from(document.querySelectorAll("[name='orderFilter'] option"))
+      .map(el => el.value)
+      .filter(period => period.includes('year'))
+  }
+
+  async fetchPeriod(period) {
+    this.log('debug', 'Fetching the list of orders for period ' + period)
+    const resp = await ky.get(
+      orderUrl + `?orderFilter=${period}&disableCsd=missing-library`
+    )
+    let commands = await parseCommands(resp)
     commands = commands.filter(
       command =>
         command.vendorRef &&
         command.detailsUrl &&
-        (command.date || command.commandDate)
+        command.commandDate &&
+        command.amount
     )
 
-    log('debug', 'Fetching details for each order')
-    const bills = await bluebird
-      .map(commands, bill => this.fetchBillDetails(bill))
-      .filter(Boolean)
-
-    return bills
-  }
-
-  async fetchYears() {
-    const $ = await this.request(orderUrl)
-    return Array.from($('#orderFilter option'))
-      .map(el => $(el).attr('value'))
-      .filter(period => period.includes('year'))
-  }
-
-  async fetchBillDetails(bill) {
-    try {
-      const $ = await this.request(baseUrl + bill.detailsUrl)
-      const { amount, date, commandDate, vendorRef, currency } = bill
-      const finalDate = date || commandDate
-      let details = extractBillDetails($('ul'))
-      let filename = `${utils.formatDate(finalDate)}_amazon_${amount.toFixed(
-        2
-      )}${currency}_${vendorRef}`
-      if (details.isHtml) {
-        filename += '.html'
-        delete details.isHtml
+    for (const bill of commands) {
+      const detailsResp = await ky.get(baseUrl + bill.detailsUrl)
+      const details$ = await detailsResp.$()
+      const normalInvoice = details$("a[href*='invoice.pdf']")
+      if (normalInvoice.length) {
+        bill.vendor = vendor
+        bill.fileurl = baseUrl + normalInvoice.attr('href')
+        ;(bill.filename = `${format(
+          bill.commandDate,
+          'yyyy-MM-dd'
+        )}_amazon_${bill.amount.toFixed(2)}${bill.currency}_${
+          bill.vendorRef
+        }.pdf`),
+          (bill.date = bill.commandDate),
+          (bill.fileAttributes = {
+            metadata: {
+              contentAuthor: 'amazon',
+              datetime: bill.commandDate,
+              datetimeLabel: 'issueDate',
+              carbonCopy: true
+            }
+          })
       } else {
-        filename += '.pdf'
-      }
-      return {
-        amount,
-        date: finalDate,
-        vendorRef,
-        currency,
-        ...details,
-        filename
-      }
-    } catch (err) {
-      log(
-        'warn',
-        `Error while fetching bill details : ${err.message.substr(0, 60)}`
-      )
-      return false
-    }
-  }
-
-  async mixedSaveBills(bills, fields) {
-    const PDFBills = bills.filter(bill => bill.filename.match(/.pdf$/))
-    const HTMLBills = bills.filter(bill => bill.filename.match(/.html$/))
-
-    log('debug', `Passing ${PDFBills.length} PDF bills`)
-    await this.saveBills(PDFBills, fields, {
-      identifiers: 'amazon',
-      keys: ['vendorRef'],
-      retry: 3,
-      contentType: 'application/pdf',
-      sourceAccountIdentifier: fields.email,
-      fileIdAttributes: ['vendorRef'],
-      linkBankOperations: false
-    })
-    log('debug', `Passing ${HTMLBills.length} HTML bills`)
-    await this.saveBills(HTMLBills, fields, {
-      identifiers: 'amazon',
-      keys: ['vendorRef'],
-      contentType: 'text/html',
-      sourceAccountIdentifier: fields.email,
-      fileIdAttributes: ['vendorRef'],
-      linkBankOperations: false
-    })
-  }
-
-  async testSession() {
-    log('debug', 'Testing session')
-    const $ = await this.request(orderUrl)
-    const authType = detectAuthType($)
-    if (
-      authType === false && // No Auth form detected on page
-      ($('#ordersContainer') != '' || $('#yourOrdersBannersContainer') != '')
-    ) {
-      log('debug', 'Session OK')
-      return $
-    }
-    log('warn', 'Session not OK')
-    return false
-  }
-
-  async sendVerifyCode(code, formData, url = `${baseUrl}/ap/cvf/verify`) {
-    log('debug', 'Sending verification code to amazon')
-    try {
-      if (!formData) formData = { ...this.getAccountData().codeFormData, code }
-      const $ = await this.request.post(url, {
-        form: formData
-      })
-      await this.saveSession()
-      // avoid to reuse the code for next connector run
-      delete this._account.auth.code
-      delete this._account.data.codeFormData
-      await this.updateAccountAttributes({
-        auth: this._account.auth,
-        data: this._account.data
-      })
-      return $
-    } catch (err) {
-      log('warn', 'error while sending verify code')
-      log('error', err.message.substr(0, 60))
-      throw errors.VENDOR_DOWN
-    }
-  }
-
-  async send2FAForm($) {
-    const options = Array.from($('input[name=option]')).map(el => $(el).val())
-
-    let chosenOption = null
-    if (options.includes('sms')) {
-      chosenOption = { option: 'sms' }
-    }
-    if (options.includes('email')) {
-      chosenOption = { option: 'email' }
-    }
-    log('debug', `Chose option ${JSON.stringify(chosenOption)}`)
-
-    if (process.env.COZY_JOB_MANUAL_EXECUTION !== 'true') {
-      // Probably need to avoid that if standalone mode, todo later
-      log(
-        'debug',
-        `this in not a manual execution. It is not possible to handle 2FA here.`
-      )
-      throw new Error('USER_ACTION_NEEDED.TWOFA_EXPIRED')
-    }
-
-    const $codeForm = await submitForm(
-      this.request,
-      $,
-      'form[name=claimspicker]',
-      { ...chosenOption },
-      null,
-      `${baseUrl}/ap/cvf/verify`
-    )
-
-    const formData = getFormData($codeForm('form.fwcim-form'))
-    await this.saveAccountData({ codeFormData: formData })
-    await this.saveSession()
-    if (process.env.NODE_ENV === 'standalone') {
-      throw new Error('errors.CHALLENGE_ASKED.EMAIL')
-    } else {
-      const twoFaOptions = {}
-      if (chosenOption) {
-        twoFaOptions.type = chosenOption.option
-      }
-      const code = await this.waitForTwoFaCode(twoFaOptions)
-      const result = await this.sendVerifyCode(code)
-      return result
-    }
-  }
-
-  async submitLoginForm(fields) {
-    let last$ = null
-    await this.signin({
-      url: orderUrl,
-      formSelector: 'form[name=signIn]',
-      formData: {
-        email: fields.email,
-        password: fields.password,
-        rememberMe: true
-      },
-      validate: (statusCode, $) => {
-        last$ = $
-        return true
-      },
-      notifySuccessfulLogin: false
-    })
-    return last$
-  }
-
-  async submitMfaForm($, fields) {
-    log('debug', 'Requiring otp...')
-
-    const formData = getFormData($('#auth-mfa-form'))
-    formData.rememberDevice = ''
-    let code = null
-
-    if (fields.mfa_code) {
-      // standalone mode
-      code = fields.mfa_code
-    } else {
-      // normal production mode
-      code = await this.waitForTwoFaCode()
-    }
-
-    formData.otpCode = code
-
-    return this.sendVerifyCode(
-      code,
-      formData,
-      $('#auth-mfa-form').attr('action')
-    )
-  }
-
-  async submitCaptchaForm($, fields) {
-    const fileurl = $('#auth-captcha-image').attr('src')
-
-    const imageRequest = this.requestFactory({
-      cheerio: false,
-      json: false
-    })
-    const body = await imageRequest(fileurl, { encoding: 'base64' })
-    const captchaResponse = await solveCaptcha({
-      type: 'image',
-      body
-    })
-
-    return submitForm(
-      this.request,
-      $,
-      'form[name=signIn]',
-      {
-        guess: captchaResponse,
-        password: fields.password,
-        'claim-autofile-hint': fields.email
-      },
-      { referer: `${baseUrl}/ap/signin` }
-    )
-  }
-
-  async authenticate(fields) {
-    await this.deactivateAutoSuccessfulLogin()
-
-    log('debug', 'Authenticating ...')
-    if (fields.pin_code && fields.pin_code.length > 1) {
-      // pin_code can be add as a string "pin_code": "0123456" in standalone
-      log(
-        'debug',
-        'We are in standalone mode and I found a code. Sending it directly'
-      )
-      return this.sendVerifyCode(fields.pin_code)
-    }
-
-    // this may not be needed
-    await this.request.post(
-      `${baseUrl}/gp/customer-preferences/save-settings/ref=icp_lop_fr-FR_tn`,
-      {
-        form: {
-          LOP: 'fr_FR',
-          _url: '/?language=fr_FR'
-        }
-      }
-    )
-
-    let authType = 'login'
-    let counter = 0
-    const maxAuthenticationSteps = 3
-    let last$ = null
-    while (authType !== false && counter < maxAuthenticationSteps) {
-      counter++
-      try {
-        if (authType === 'login') {
-          last$ = await this.submitLoginForm(fields)
-        } else if (authType === '2fa') {
-          last$ = await this.send2FAForm(last$)
-        } else if (authType === 'mfa') {
-          last$ = await this.submitMfaForm(last$, fields)
-        } else if (authType === 'captcha') {
-          last$ = await this.submitCaptchaForm(last$, fields)
-        }
-        authType = detectAuthType(last$)
-      } catch (err) {
-        if (err.message === 'USER_ACTION_NEEDED.TWOFA_EXPIRED') throw err
-        log(
-          'warn',
-          `Error in while authenticating ${authType} : ${err.message.substring(
-            0,
-            60
-          )}`
+        log.warn(
+          `Could not find a file for bill ${bill.vendorRef} from ${bill.commandDate}`
         )
       }
     }
 
-    if (!(await this.testSession())) {
-      log('debug', `Wrong session even after ${maxAuthenticationSteps} tries`)
-      log('debug', `authType = ${authType}`)
-
-      throw new Error(errors.LOGIN_FAILED)
-    }
-    return this.saveSession()
+    return commands
   }
 
-  async setState(state) {
-    return this.updateAccountAttributes({ state })
+  // P
+  async getUserDataFromWebsite() {
+    if (this.store && this.store.email) {
+      return {
+        sourceAccountIdentifier: this.store.email
+      }
+    } else {
+      let credentials = await this.getCredentials()
+      if (credentials && credentials.email) {
+        return {
+          sourceAccountIdentifier: credentials.email
+        }
+      } else {
+        this.log('debug', 'No credentials found')
+      }
+    }
   }
 }
 
-const connector = new AmazonKonnector({
-  // debug: 'json',
-  cheerio: true,
-  json: false,
-  headers: {
-    'Accept-Language': 'en-us,en;q=0.5',
-    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-  },
-  gzip: true
-})
-connector.run()
+const connector = new AmazonContentScript()
+connector
+  .init({
+    additionalExposedMethodsNames: [
+      'getYears',
+      'checkingBox',
+      'setListenerLogin',
+      'setListenerPassword'
+    ]
+  })
+  .catch(err => {
+    log.warn(err)
+  })
