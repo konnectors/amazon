@@ -38,9 +38,6 @@ class AmazonContentScript extends ContentScript {
       } else {
         await this.showLoginFormAndWaitForAuthentication()
       }
-      if (this.store && (this.store.email || this.store.password)) {
-        await this.saveCredentials(this.store)
-      }
     }
     return true
   }
@@ -180,6 +177,9 @@ class AmazonContentScript extends ContentScript {
         { contentType: 'application/pdf' },
         context
       )
+    }
+    if (this.store && (this.store.email || this.store.password)) {
+      await this.saveCredentials(this.store)
     }
   }
 
