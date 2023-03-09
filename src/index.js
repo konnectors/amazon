@@ -38,9 +38,6 @@ class AmazonContentScript extends ContentScript {
       } else {
         await this.showLoginFormAndWaitForAuthentication()
       }
-      if (this.store && (this.store.email || this.store.password)) {
-        await this.saveCredentials(this.store)
-      }
     }
     return true
   }
@@ -162,6 +159,9 @@ class AmazonContentScript extends ContentScript {
 
   // P
   async fetch(context) {
+    if (this.store && (this.store.email || this.store.password)) {
+      await this.saveCredentials(this.store)
+    }
     await this.bridge.call(
       'setUserAgent',
       'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
