@@ -10,8 +10,8 @@
     "@cozy/minilog": "1.0.0",
     "cheerio": "1.0.0-rc.12",
     "cozy-clisk": "^0.16.1",
-    "date-fns": "2.29.3",
-    "ky": "0.33.2"
+    "date-fns": "2.30.0",
+    "p-retry": "^5.1.2"
   },
   "eslintConfig": {
     "extends": [
