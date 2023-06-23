@@ -1,14 +1,14 @@
 import { ContentScript } from 'cozy-clisk/dist/contentscript'
-import { kyScraper as ky } from './utils'
-import { format } from 'date-fns'
+// import { format, parse } from 'date-fns'
+// import { fr } from 'date-fns/locale'
 import Minilog from '@cozy/minilog'
-import { parseCommands } from './scraping'
+// import pRetry from 'p-retry'
 
 const log = Minilog('ContentScript')
 Minilog.enable()
 
 const baseUrl = 'https://www.amazon.fr'
-const orderUrl = `${baseUrl}/gp/your-account/order-history`
+// const orderUrl = `${baseUrl}/gp/your-account/order-history`
 const vendor = 'amazon'
 
 class AmazonContentScript extends ContentScript {
@@ -166,74 +166,128 @@ class AmazonContentScript extends ContentScript {
       'setUserAgent',
       'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
     )
-    const bills = await this.fetchPeriod('months-3')
-    await this.saveBills(bills, { contentType: 'application/pdf' }, context)
     await this.waitForElementInWorker('#nav_prefetch_yourorders')
     await this.clickAndWait('#nav_prefetch_yourorders', "[name='orderFilter']")
     const years = await this.runInWorker('getYears')
     this.log('debug', 'Years :' + years)
-    for (const year of years) {
-      this.log('debug', 'Saving year ' + year)
-      const periodBills = await this.fetchPeriod(year)
-      await this.saveBills(
-        periodBills,
-        { contentType: 'application/pdf' },
-        context
-      )
+
+    for (let i = 0; i < years.length; i++) {
+      this.log('debug', 'Saving year ' + years[i])
+      await Promise.race([
+        this.waitForElementInWorker('#rhf-container'),
+        this.waitForElementInWorker('.js-order-card')
+      ])
+      await this.waitForElementInWorker('.num-orders')
+      let numberOfCommands = await this.runInWorker('getNumberOfCommands')
+      await this.runInWorker('deleteElement', '.num-orders')
+      if (numberOfCommands === 0) {
+        this.log('info', `No commands found for period ${years[i]}`)
+        await this.navigateToNextPeriod(years[i + 1])
+        continue
+      }
+      this.log('info', `found ${numberOfCommands} for this year, fetching them`)
+      let periodBills
+      let j = 1
+      let hasMorePage = true
+      while (hasMorePage) {
+        this.log('info', `fetching bills for page ${j}`)
+        const pageBills = await this.fetchPeriod({
+          period: years[i],
+          page: j,
+          numberOfCommands
+        })
+        periodBills = pageBills
+        await this.saveBills(periodBills, {
+          context,
+          fileIdAttributes: ['vendorRef'],
+          contentType: 'application/pdf',
+          qualificationLabel: 'other_invoice'
+        })
+        hasMorePage = await this.runInWorker('checkIfHasMorePage')
+        if (hasMorePage) {
+          this.log('info', 'One more page detected, proceeding')
+          await this.runInWorker('click', '.a-last > a')
+          await this.waitForElementInWorker('.num-orders')
+          await this.runInWorker('deleteElement', '.num-orders')
+          j++
+        } else {
+          this.log('info', 'no more page for this period')
+        }
+      }
+      if (i + 1 === years.length) {
+        this.log('info', 'This was the last year found')
+        break
+      }
+      this.log('info', 'Fetching for this period ends, getting to next period')
+      // If the period selector is not visible in the webview frame, the following function cannot click
+      // on the list box button. To prevent this happening, we need to scroll the webview back up
+      // to the top of the page
+      await this.runInWorker('scrollToTop')
+      await this.navigateToNextPeriod(years[i + 1])
     }
+  }
+
+  async navigateToNextPeriod(period) {
+    this.log('info', 'navigateToNextPeriod starts')
+    await this.waitForElementInWorker('[name="orderFilter"]')
+    await this.clickAndWait('[name="orderFilter"]', 'ul[role="listbox"]')
+    await this.runInWorker('click', `[data-value*="${period}"]`)
+  }
+
+  // W
+  async clickNextYear(period) {
+    document.querySelector(`a[data-value*="${period}"`).click()
   }
 
   // W
   async getYears() {
     return Array.from(document.querySelectorAll("[name='orderFilter'] option"))
       .map(el => el.value)
-      .filter(period => period.includes('year'))
+      .filter(period => period.includes('year') || period.includes('months'))
   }
 
-  async fetchPeriod(period) {
-    this.log('debug', 'Fetching the list of orders for period ' + period)
-    const resp = await ky.get(
-      orderUrl + `?orderFilter=${period}&disableCsd=missing-library`
-    )
-    let commands = await parseCommands(resp)
-    commands = commands.filter(
-      command =>
-        command.vendorRef &&
-        command.detailsUrl &&
-        command.commandDate &&
-        command.amount
-    )
+  // W
+  getNumberOfCommands() {
+    this.log('info', 'getNumberOfCommands starts')
+    const element = document.querySelector('.num-orders').textContent
+    const numberOfCommands = parseInt(element.split(' ')[0])
+    return numberOfCommands
+  }
 
-    for (const bill of commands) {
-      const detailsResp = await ky.get(baseUrl + bill.detailsUrl)
-      const details$ = await detailsResp.$()
-      const normalInvoice = details$("a[href*='invoice.pdf']")
-      if (normalInvoice.length) {
-        bill.vendor = vendor
-        bill.fileurl = baseUrl + normalInvoice.attr('href')
-        ;(bill.filename = `${format(
-          bill.commandDate,
-          'yyyy-MM-dd'
-        )}_amazon_${bill.amount.toFixed(2)}${bill.currency}_${
-          bill.vendorRef
-        }.pdf`),
-          (bill.date = bill.commandDate),
-          (bill.fileAttributes = {
-            metadata: {
-              contentAuthor: 'amazon',
-              datetime: bill.commandDate,
-              datetimeLabel: 'issueDate',
-              carbonCopy: true
-            }
-          })
-      } else {
-        log.warn(
-          `Could not find a file for bill ${bill.vendorRef} from ${bill.commandDate}`
-        )
-      }
+  async fetchPeriod(infos) {
+    this.log(
+      'debug',
+      `Fetching the list of orders for page ${infos.page} of period ${infos.period}`
+    )
+    const numberOfCards = await this.runInWorker('getNumberOfCardsPerPage')
+    for (let i = 0; i < numberOfCards; i++) {
+      // await pRetry(await this.clickDownloadLinkButton(i), {
+      //   retries: 5
+      // })
+      await this.runInWorker('makeBillDownloadLinkVisible', i)
+      await this.waitForElementInWorker(
+        `#a-popover-content-${i + 1} > ul > li > span > .a-link-normal`
+      )
+      this.log('info', 'element visible, continue')
     }
+    const pageBills = await this.runInWorker('fetchBills')
+    return pageBills
+  }
 
-    return commands
+  // async clickDownloadLinkButton(number) {
+  //   await this.runInWorker('makeBillDownloadLinkVisible', number)
+  //   const response = await this.waitForElementInWorker(
+  //     `#a-popover-content-${number + 1} > ul > li > span > .a-link-normal`,
+  //     { timeout: 2000 }
+  //   )
+  //   return response
+  // }
+
+  deleteElement(element) {
+    // As we loop on the commands page, every time we changing period, we got the exact same elements in the following page.
+    // To avoid problems when checking or waiting for a specific element between page changes
+    // we remove the element from the html so it's not present anymore and come back with any new page or reload.
+    document.querySelector(element).remove()
   }
 
   // P
@@ -253,6 +307,143 @@ class AmazonContentScript extends ContentScript {
       }
     }
   }
+
+  async fetchBills() {
+    this.log('info', 'fetchBills starts')
+    let foundOrders = document.querySelectorAll('.js-order-card')
+    const numberOfOrders = foundOrders.length
+    let commandsToBills = []
+    for (let i = 0; i < numberOfOrders; i++) {
+      const commands = await this.computeCommands(foundOrders[i], i)
+      if (commands === null) {
+        continue
+      }
+      if (Array.isArray(commands.fileurl)) {
+        let billNumber = 1
+        for (const url of commands.fileurl) {
+          const oneBill = {
+            ...commands
+          }
+          oneBill.fileurl = url
+          oneBill.filename = oneBill.filename.replace(
+            '.pdf',
+            `_facture${billNumber}.pdf`
+          )
+          oneBill.vendorRef = `${oneBill.vendorRef}_${billNumber}`
+          commandsToBills.push(oneBill)
+          billNumber++
+        }
+      } else {
+        commandsToBills.push(commands)
+      }
+    }
+    return commandsToBills
+  }
+
+  makeBillDownloadLinkVisible(number) {
+    this.clickBillButton(document.querySelectorAll('.js-order-card')[number])
+  }
+
+  clickBillButton(order) {
+    order.querySelectorAll('.a-popover-trigger').forEach(popover => {
+      if (popover.textContent.includes('Facture')) popover.click()
+    })
+  }
+
+  computeCommands(order, orderNumber) {
+    const [foundCommandDate, foundCommandPrice, ,] =
+      order.querySelectorAll('.value')
+    const amount = foundCommandPrice.textContent.trim().substring(1)
+    if (amount.match('crédit audio')) {
+      this.log('info', 'Found an audiobook, jumping this bill')
+      return null
+    }
+    if (amount === '0,00') {
+      this.log(
+        'info',
+        'Found a free product, no bill attached to it, jumping this bill'
+      )
+      return null
+    }
+    const parsedAmount = parseFloat(amount.replace(',', '.'))
+    const currency = foundCommandPrice.textContent.trim().substring(0, 1)
+    const commandDate = foundCommandDate.textContent.trim()
+    const [day, month, year] = commandDate.split(' ')
+    const parsedDate = getDate(day, month, year)
+    const vendorRef = order.querySelector('bdi').textContent
+    const billProducts = []
+    const foundProducts = order.querySelectorAll(
+      '.a-row > a[href*="/gp/product/"]'
+    )
+    for (const link of foundProducts) {
+      const articleLink = baseUrl + link.getAttribute('href')
+      const articleName = link.textContent.trim()
+      const article = {
+        articleLink,
+        articleName
+      }
+      billProducts.push(article)
+    }
+    const foundUrls = document.querySelectorAll(
+      `#a-popover-content-${
+        orderNumber + 1
+      } > ul > li > span > a[href*="invoice.pdf"]`
+      // , #a-popover-content-${
+      //   orderNumber + 1
+      // } > ul > li > span > a[href*="/generated_invoices"]
+      // `
+    )
+    let urlsArray = []
+    for (const singleUrl of foundUrls) {
+      const href = singleUrl.getAttribute('href')
+      // if (href.includes('https://s3.amazonaws.com/generated_invoices')) {
+      //   this.log('info', 'This is not a bill, skiping it')
+      //   // urlsArray.push(href)
+      //   // continue
+      // }
+      urlsArray.push(baseUrl + href)
+    }
+    const fileurl = urlsArray.length > 1 ? urlsArray : urlsArray[0]
+    let command = {
+      vendor: 'amazon.fr',
+      date: parsedDate,
+      amount: parsedAmount,
+      currency,
+      vendorRef,
+      fileurl,
+      filename: `${parsedDate}_${vendor}_${parsedAmount}${currency}.pdf`,
+      billProducts,
+      fileAttributes: {
+        metadata: {
+          contentAuthor: 'amazon',
+          datetime: new Date(parsedDate),
+          datetimeLabel: 'issueDate',
+          carbonCopy: true
+        }
+      }
+    }
+    return command
+  }
+
+  getNumberOfCardsPerPage() {
+    this.log('info', 'getNumberOfCardsPerPage starts')
+    const numberOfCards = document.querySelectorAll('.js-order-card').length
+    return numberOfCards
+  }
+
+  scrollToTop() {
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }
+
+  checkIfHasMorePage() {
+    this.log('info', 'checkIfHasMorePage starts')
+    const element = document.querySelector('.a-last')
+    if (element) {
+      const isEnabled = !element.classList.contains('a-disabled')
+      return isEnabled
+    }
+    return false
+  }
 }
 
 const connector = new AmazonContentScript()
@@ -262,9 +453,72 @@ connector
       'getYears',
       'checkingBox',
       'setListenerLogin',
-      'setListenerPassword'
+      'setListenerPassword',
+      'clickNextYear',
+      'getNumberOfCommands',
+      'deleteElement',
+      'fetchBills',
+      'makeBillDownloadLinkVisible',
+      'getNumberOfCardsPerPage',
+      'scrollToTop',
+      'checkIfHasMorePage'
     ]
   })
   .catch(err => {
     log.warn(err)
   })
+
+function getDate(day, month, year) {
+  let parsedMonth
+  switch (month) {
+    case 'janvier':
+    case 'january':
+      parsedMonth = '01'
+      break
+    case 'février':
+    case 'february':
+      parsedMonth = '02'
+      break
+    case 'mars':
+    case 'march':
+      parsedMonth = '03'
+      break
+    case 'avril':
+    case 'april':
+      parsedMonth = '04'
+      break
+    case 'mai':
+    case 'may':
+      parsedMonth = '05'
+      break
+    case 'juin':
+    case 'june':
+      parsedMonth = '06'
+      break
+    case 'juillet':
+    case 'july':
+      parsedMonth = '07'
+      break
+    case 'août':
+    case 'august':
+      parsedMonth = '08'
+      break
+    case 'septembre':
+    case 'september':
+      parsedMonth = '09'
+      break
+    case 'octobre':
+    case 'october':
+      parsedMonth = '10'
+      break
+    case 'novembre':
+    case 'november':
+      parsedMonth = '11'
+      break
+    case 'décembre':
+    case 'december':
+      parsedMonth = '12'
+      break
+  }
+  return `${year}-${parsedMonth}-${day}`
+}
