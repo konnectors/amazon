@@ -274,6 +274,8 @@ class AmazonContentScript extends ContentScript {
     }
     const pageBills = await this.runInWorker('fetchBills')
     return pageBills
+  }
+
   async clickDownloadLinkButton(number) {
     this.log('info', `clickDownloadLinkButton loop - ${number}`)
     try {
@@ -287,8 +289,6 @@ class AmazonContentScript extends ContentScript {
       throw new Error('Cannot make the element visible')
     }
   }
-  //   return response
-  // }
 
   deleteElement(element) {
     // As we loop on the commands page, every time we changing period, we got the exact same elements in the following page.
@@ -395,18 +395,23 @@ class AmazonContentScript extends ContentScript {
       `#a-popover-content-${
         orderNumber + 1
       } > ul > li > span > a[href*="invoice.pdf"]`
+      // Selector for the "récépissé", for later.
       // , #a-popover-content-${
       //   orderNumber + 1
-      // } > ul > li > span > a[href*="/generated_invoices"]
-      // `
+      // } > ul > li > span > a[href*="/generated_invoices"]`
     )
     let urlsArray = []
     for (const singleUrl of foundUrls) {
       const href = singleUrl.getAttribute('href')
+
+      // This code is used to get the "récépissé" file you can download in place of a bill sometimes
+      // The connector gets a CORS error when trying to download this kind of file. No requestOptions seems to appears
+      // when given to the file, so we just keep this code around for later investigations.
       // if (href.includes('https://s3.amazonaws.com/generated_invoices')) {
-      //   this.log('info', 'This is not a bill, skiping it')
-      //   // urlsArray.push(href)
-      //   // continue
+      //   // this.log('info', 'This is not a bill, skiping it')
+      //   this.log('info', `HREF FROM RECEPISSE : ${href}`)
+      //   urlsArray.push(href)
+      //   continue
       // }
       urlsArray.push(baseUrl + href)
     }
@@ -428,6 +433,22 @@ class AmazonContentScript extends ContentScript {
           carbonCopy: true
         }
       }
+      // requestOptions: {
+      //   headers: {
+      //     Accept:
+      //       'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+      //     'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+      //     'Cache-Control': 'no-cache',
+      //     Connection: 'keep-alive',
+      //     Pragma: 'no-cache',
+      //     Referer: 'https://www.amazon.fr/',
+      //     'Sec-Fetch-Dest': 'document',
+      //     'Sec-Fetch-Mode': 'navigate',
+      //     'Sec-Fetch-Site': 'cross-site',
+      //     'Sec-Fetch-User': '?1',
+      //     'Upgrade-Insecure-Requests': '1'
+      //   }
+      // }
     }
     return command
   }
