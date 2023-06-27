@@ -19,7 +19,6 @@ class AmazonContentScript extends ContentScript {
       url: baseUrl,
       visible: false
     })
-
     await this.waitForElementInWorker('#nav-progressive-greeting')
     const authenticated = await this.runInWorker('checkAuthenticated')
     this.log('debug', 'Authenticated : ' + authenticated)
@@ -40,6 +39,28 @@ class AmazonContentScript extends ContentScript {
       }
     }
     return true
+  }
+
+  async ensureNotAuthenticated() {
+    this.log('info', 'ensureNotAuthenticated starts')
+    await this.bridge.call('setWorkerState', {
+      url: baseUrl,
+      visible: false
+    })
+    await this.waitForElementInWorker('#nav-cart-count')
+    await Promise.race([
+      this.waitForElementInWorker('#nav-button-avatar'),
+      this.waitForElementInWorker('a[href*="/gp/flex/sign-out.html?"]')
+    ])
+    const isConnected = await this.isElementInWorker(
+      'a[href*="/gp/flex/sign-out.html?"]'
+    )
+    if (isConnected) {
+      await this.clickAndWait(
+        'a[href*="/gp/flex/sign-out.html?"]',
+        '#ap_email_login'
+      )
+    }
   }
 
   // W
