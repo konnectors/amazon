@@ -56,10 +56,16 @@ class AmazonContentScript extends ContentScript {
       'a[href*="/gp/flex/sign-out.html?"]'
     )
     if (isConnected) {
-      await this.clickAndWait(
-        'a[href*="/gp/flex/sign-out.html?"]',
-        '#ap_email_login'
-      )
+      await this.runInWorker('click', 'a[href*="/gp/flex/sign-out.html?"]')
+      await Promise.race([
+        this.waitForElementInWorker('#ap_email_login'),
+        this.waitForElementInWorker('#ap_password')
+      ])
+      if (await this.isElementInWorker('#ap_password')) {
+        throw new Error(
+          'The logout leads to the password page, cannot save a login value for sourceAccountIdentifier'
+        )
+      }
     }
   }
 
