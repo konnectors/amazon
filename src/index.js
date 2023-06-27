@@ -2,7 +2,7 @@ import { ContentScript } from 'cozy-clisk/dist/contentscript'
 // import { format, parse } from 'date-fns'
 // import { fr } from 'date-fns/locale'
 import Minilog from '@cozy/minilog'
-// import pRetry from 'p-retry'
+import pRetry from 'p-retry'
 
 const log = Minilog('ContentScript')
 Minilog.enable()
@@ -261,25 +261,32 @@ class AmazonContentScript extends ContentScript {
     )
     const numberOfCards = await this.runInWorker('getNumberOfCardsPerPage')
     for (let i = 0; i < numberOfCards; i++) {
-      // await pRetry(await this.clickDownloadLinkButton(i), {
-      //   retries: 5
-      // })
-      await this.runInWorker('makeBillDownloadLinkVisible', i)
-      await this.waitForElementInWorker(
-        `#a-popover-content-${i + 1} > ul > li > span > .a-link-normal`
+      await pRetry(
+        async () => {
+          this.log('info', `clicking on ${i + 1} command`)
+          await this.clickDownloadLinkButton(i)
+        },
+        {
+          retries: 5
+        }
       )
       this.log('info', 'element visible, continue')
     }
     const pageBills = await this.runInWorker('fetchBills')
     return pageBills
+  async clickDownloadLinkButton(number) {
+    this.log('info', `clickDownloadLinkButton loop - ${number}`)
+    try {
+      await this.runInWorker('makeBillDownloadLinkVisible', number)
+      await this.waitForElementInWorker(
+        `#a-popover-content-${number + 1} > ul > li > span > .a-link-normal`,
+        { timeout: 1000 }
+      )
+    } catch (err) {
+      this.log('warn', 'The element wont turn visible, aborting')
+      throw new Error('Cannot make the element visible')
+    }
   }
-
-  // async clickDownloadLinkButton(number) {
-  //   await this.runInWorker('makeBillDownloadLinkVisible', number)
-  //   const response = await this.waitForElementInWorker(
-  //     `#a-popover-content-${number + 1} > ul > li > span > .a-link-normal`,
-  //     { timeout: 2000 }
-  //   )
   //   return response
   // }
 
