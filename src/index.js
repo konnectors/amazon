@@ -1,6 +1,6 @@
 import { ContentScript } from 'cozy-clisk/dist/contentscript'
-// import { format, parse } from 'date-fns'
-// import { fr } from 'date-fns/locale'
+import { format, parse } from 'date-fns'
+import { fr } from 'date-fns/locale'
 import Minilog from '@cozy/minilog'
 import pRetry from 'p-retry'
 
@@ -212,7 +212,10 @@ class AmazonContentScript extends ContentScript {
         await this.navigateToNextPeriod(years[i + 1])
         continue
       }
-      this.log('info', `found ${numberOfCommands} for this year, fetching them`)
+      this.log(
+        'info',
+        `found ${numberOfCommands} commands for this year, fetching them`
+      )
       let periodBills
       let j = 1
       let hasMorePage = true
@@ -290,7 +293,6 @@ class AmazonContentScript extends ContentScript {
     for (let i = 0; i < numberOfCards; i++) {
       await pRetry(
         async () => {
-          this.log('info', `clicking on ${i + 1} command`)
           await this.clickDownloadLinkButton(i)
         },
         {
@@ -304,7 +306,6 @@ class AmazonContentScript extends ContentScript {
   }
 
   async clickDownloadLinkButton(number) {
-    this.log('info', `clickDownloadLinkButton loop - ${number}`)
     try {
       await this.runInWorker('makeBillDownloadLinkVisible', number)
       await this.waitForElementInWorker(
@@ -402,8 +403,10 @@ class AmazonContentScript extends ContentScript {
     const parsedAmount = parseFloat(amount.replace(',', '.'))
     const currency = foundCommandPrice.textContent.trim().substring(0, 1)
     const commandDate = foundCommandDate.textContent.trim()
-    const [day, month, year] = commandDate.split(' ')
-    const parsedDate = getDate(day, month, year)
+    const parsedDate = parse(commandDate, 'd MMMM yyyy', new Date(), {
+      locale: fr
+    })
+    const formattedDate = format(parsedDate, 'yyyy-MM-dd')
     const vendorRef = order.querySelector('bdi').textContent
     const billProducts = []
     const foundProducts = order.querySelectorAll(
@@ -445,17 +448,18 @@ class AmazonContentScript extends ContentScript {
     const fileurl = urlsArray.length > 1 ? urlsArray : urlsArray[0]
     let command = {
       vendor: 'amazon.fr',
-      date: parsedDate,
+      date: formattedDate,
       amount: parsedAmount,
       currency,
       vendorRef,
       fileurl,
-      filename: `${parsedDate}_${vendor}_${parsedAmount}${currency}.pdf`,
+      filename: `${formattedDate}_${vendor}_${parsedAmount}${currency}.pdf`,
       billProducts,
       fileAttributes: {
         metadata: {
           contentAuthor: 'amazon',
-          datetime: new Date(parsedDate),
+          // datetime: new Date(parsedDate),
+          datetime: new Date(formattedDate),
           datetimeLabel: 'issueDate',
           carbonCopy: true
         }
@@ -522,58 +526,3 @@ connector
   .catch(err => {
     log.warn(err)
   })
-
-function getDate(day, month, year) {
-  let parsedMonth
-  switch (month) {
-    case 'janvier':
-    case 'january':
-      parsedMonth = '01'
-      break
-    case 'février':
-    case 'february':
-      parsedMonth = '02'
-      break
-    case 'mars':
-    case 'march':
-      parsedMonth = '03'
-      break
-    case 'avril':
-    case 'april':
-      parsedMonth = '04'
-      break
-    case 'mai':
-    case 'may':
-      parsedMonth = '05'
-      break
-    case 'juin':
-    case 'june':
-      parsedMonth = '06'
-      break
-    case 'juillet':
-    case 'july':
-      parsedMonth = '07'
-      break
-    case 'août':
-    case 'august':
-      parsedMonth = '08'
-      break
-    case 'septembre':
-    case 'september':
-      parsedMonth = '09'
-      break
-    case 'octobre':
-    case 'october':
-      parsedMonth = '10'
-      break
-    case 'novembre':
-    case 'november':
-      parsedMonth = '11'
-      break
-    case 'décembre':
-    case 'december':
-      parsedMonth = '12'
-      break
-  }
-  return `${year}-${parsedMonth}-${day}`
-}
