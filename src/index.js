@@ -2,7 +2,7 @@ import { ContentScript } from 'cozy-clisk/dist/contentscript'
 import { format, parse } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import Minilog from '@cozy/minilog'
-import pRetry from 'p-retry'
+import waitFor, { TimeoutError } from 'p-wait-for'
 
 const log = Minilog('ContentScript')
 Minilog.enable()
@@ -291,31 +291,27 @@ class AmazonContentScript extends ContentScript {
     )
     const numberOfCards = await this.runInWorker('getNumberOfCardsPerPage')
     for (let i = 0; i < numberOfCards; i++) {
-      await pRetry(
+      await waitFor(
         async () => {
-          await this.clickDownloadLinkButton(i)
+          await this.runInWorker('makeBillDownloadLinkVisible', i)
+          return await this.isElementInWorker(
+            `#a-popover-content-${i + 1} > ul > li > span > .a-link-normal`
+          )
         },
         {
-          retries: 5
+          interval: 1000,
+          timeout: {
+            milliseconds: 30000,
+            message: new TimeoutError(
+              `The click on the download link Button timed out after 30000 ms`
+            )
+          }
         }
       )
       this.log('info', 'element visible, continue')
     }
     const pageBills = await this.runInWorker('fetchBills')
     return pageBills
-  }
-
-  async clickDownloadLinkButton(number) {
-    try {
-      await this.runInWorker('makeBillDownloadLinkVisible', number)
-      await this.waitForElementInWorker(
-        `#a-popover-content-${number + 1} > ul > li > span > .a-link-normal`,
-        { timeout: 1000 }
-      )
-    } catch (err) {
-      this.log('warn', 'The element wont turn visible, aborting')
-      throw new Error('Cannot make the element visible')
-    }
   }
 
   deleteElement(element) {
