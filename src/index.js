@@ -13,8 +13,11 @@ const vendor = 'amazon'
 
 class AmazonContentScript extends ContentScript {
   // P
-  async ensureAuthenticated() {
+  async ensureAuthenticated(account) {
     this.log('info', 'Starting ensureAuth')
+    if (!account) {
+      await this.ensureNotAuthenticated()
+    }
     await this.bridge.call(
       'setUserAgent',
       'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
@@ -193,6 +196,7 @@ class AmazonContentScript extends ContentScript {
     await this.clickAndWait('#nav_prefetch_yourorders', "[name='orderFilter']")
     const years = await this.runInWorker('getYears')
     this.log('debug', 'Years :' + years)
+    await this.navigateToNextPeriod(years[0])
 
     for (let i = 0; i < years.length; i++) {
       this.log('debug', 'Saving year ' + years[i])
@@ -269,7 +273,7 @@ class AmazonContentScript extends ContentScript {
   async getYears() {
     return Array.from(document.querySelectorAll("[name='orderFilter'] option"))
       .map(el => el.value)
-      .filter(period => period.includes('year') || period.includes('months'))
+      .filter(period => period.includes('year'))
   }
 
   // W
@@ -374,7 +378,13 @@ class AmazonContentScript extends ContentScript {
 
   clickBillButton(order) {
     order.querySelectorAll('.a-popover-trigger').forEach(popover => {
-      if (popover.textContent.includes('Facture')) popover.click()
+      if (popover.textContent.includes('Facture')) {
+        popover.click()
+      } else {
+        order.querySelectorAll('.a-link-normal').forEach(element => {
+          if (element.textContent.includes('Facture')) element.click()
+        })
+      }
     })
   }
 
