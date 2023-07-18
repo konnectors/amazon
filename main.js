@@ -12764,13 +12764,20 @@ const vendor = 'amazon'
 
 class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTED_MODULE_0__.ContentScript {
   // P
-  async ensureAuthenticated() {
+  async ensureAuthenticated(account) {
     this.log('info', 'Starting ensureAuth')
+    if (!account) {
+      await this.ensureNotAuthenticated()
+    }
+    await this.bridge.call(
+      'setUserAgent',
+      'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
+    )
     await this.bridge.call('setWorkerState', {
       url: baseUrl,
       visible: false
     })
-    await this.waitForElementInWorker('#nav-progressive-greeting')
+    await this.waitForElementInWorker('#nav-link-accountList')
     const authenticated = await this.runInWorker('checkAuthenticated')
     this.log('debug', 'Authenticated : ' + authenticated)
     if (authenticated) {
@@ -12808,21 +12815,15 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
     )
     if (isConnected) {
       await this.runInWorker('click', 'a[href*="/gp/flex/sign-out.html?"]')
-      await Promise.race([
-        this.waitForElementInWorker('#ap_email_login'),
-        this.waitForElementInWorker('#ap_password')
-      ])
-      if (await this.isElementInWorker('#ap_password')) {
-        throw new Error(
-          'The logout leads to the password page, cannot save a login value for sourceAccountIdentifier'
-        )
-      }
+      await this.waitForElementInWorker('#ap_email_login')
     }
   }
 
   // W
   async checkAuthenticated() {
-    const result = Boolean(document.querySelector('#nav-greeting-name'))
+    const result = Boolean(
+      document.querySelector('a[href*="/gp/flex/sign-out.html?"]')
+    )
     this.log('debug', 'Authentification detection : ' + result)
     return result
   }
@@ -12834,18 +12835,19 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
       url: baseUrl,
       visible: false
     })
-    await this.waitForElementInWorker('a[id="nav-logobar-greeting"]')
-    await this.clickAndWait('a[id="nav-logobar-greeting"]', '#ap_email_login')
-    // Enter login
-    const emailFieldSelector = '#ap_email_login'
-    await this.runInWorker('fillText', emailFieldSelector, credentials.email)
+    await this.waitForElementInWorker('#nav-link-accountList')
+    await this.runInWorker('click', '#nav-link-accountList')
+    await Promise.all([
+      this.waitForElementInWorker('#ap_email'),
+      this.waitForElementInWorker('#continue')
+    ])
 
+    // Enter login
+    const emailFieldSelector = '#ap_email'
+    await this.runInWorker('fillText', emailFieldSelector, credentials.email)
     // Click continue
     // Watch out: multiples input#continue buttons
-    await this.clickAndWait(
-      'input#continue[aria-labelledby="continue-announce"]',
-      '[name="rememberMe"]'
-    )
+    await this.clickAndWait('input[id="continue"]', '[name="rememberMe"]')
 
     // Enter password
     const passFieldSelector = '#ap_password'
@@ -12861,7 +12863,7 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
 
   // W
   findAndSendCredentials() {
-    const emailField = document.querySelector('#ap_email_login')
+    const emailField = document.querySelector('#ap_email')
     const passwordField = document.querySelector('#ap_password')
     this.log('debug', 'Executing findAndSendCredentials')
     if (emailField) {
@@ -12884,8 +12886,8 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
       url: baseUrl,
       visible: false
     })
-    await this.waitForElementInWorker('a[id="nav-logobar-greeting"]')
-    await this.clickAndWait('a[id="nav-logobar-greeting"]', '#ap_email_login')
+    await this.waitForElementInWorker('#nav-link-accountList')
+    await this.clickAndWait('#nav-link-accountList', '#ap_email')
 
     await this.bridge.call('setWorkerState', {
       visible: true
@@ -12905,7 +12907,7 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
 
   // W
   async setListenerLogin() {
-    const loginField = document.querySelector('#ap_email_login')
+    const loginField = document.querySelector('#ap_email')
     if (loginField) {
       loginField.addEventListener(
         'change',
@@ -12937,17 +12939,15 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
 
   // P
   async fetch(context) {
+    this.log('info', 'Starting fetch')
     if (this.store && (this.store.email || this.store.password)) {
       await this.saveCredentials(this.store)
     }
-    await this.bridge.call(
-      'setUserAgent',
-      'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
-    )
     await this.waitForElementInWorker('#nav_prefetch_yourorders')
     await this.clickAndWait('#nav_prefetch_yourorders', "[name='orderFilter']")
     const years = await this.runInWorker('getYears')
     this.log('debug', 'Years :' + years)
+    await this.navigateToNextPeriod(years[0])
 
     for (let i = 0; i < years.length; i++) {
       this.log('debug', 'Saving year ' + years[i])
@@ -13024,7 +13024,7 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
   async getYears() {
     return Array.from(document.querySelectorAll("[name='orderFilter'] option"))
       .map(el => el.value)
-      .filter(period => period.includes('year') || period.includes('months'))
+      .filter(period => period.includes('year'))
   }
 
   // W
@@ -13074,6 +13074,7 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
 
   // P
   async getUserDataFromWebsite() {
+    this.log('info', 'Starting getUserDataFromWebsite')
     if (this.store && this.store.email) {
       return {
         sourceAccountIdentifier: this.store.email
@@ -13128,7 +13129,13 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
 
   clickBillButton(order) {
     order.querySelectorAll('.a-popover-trigger').forEach(popover => {
-      if (popover.textContent.includes('Facture')) popover.click()
+      if (popover.textContent.includes('Facture')) {
+        popover.click()
+      } else {
+        order.querySelectorAll('.a-link-normal').forEach(element => {
+          if (element.textContent.includes('Facture')) element.click()
+        })
+      }
     })
   }
 
