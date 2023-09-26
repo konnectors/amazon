@@ -12926,6 +12926,7 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
 
   // W
   async checkAuthenticated() {
+    this.log('info', 'checkAuthenticated starts')
     const result = Boolean(
       document.querySelector('a[href*="/gp/flex/sign-out.html?"]')
     )
@@ -12935,6 +12936,7 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
 
   // P
   async tryAutoLogin(credentials) {
+    this.log('info', 'tryAutoLogin starts')
     // Bring login form via main page
     await this.bridge.call('setWorkerState', {
       url: baseUrl,
@@ -12968,6 +12970,7 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
 
   // W
   findAndSendCredentials() {
+    this.log('info', 'findAndSendCredentials starts')
     const emailField = document.querySelector('#ap_email')
     const passwordField = document.querySelector('#ap_password')
     this.log('debug', 'Executing findAndSendCredentials')
@@ -13062,11 +13065,24 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
       ])
       await this.waitForElementInWorker('.num-orders')
       let numberOfCommands = await this.runInWorker('getNumberOfCommands')
+      await this.runInWorkerUntilTrue({
+        method: 'waitForOrdersLoading',
+        args: [numberOfCommands]
+      })
       await this.runInWorker('deleteElement', '.num-orders')
+      let lastYearsArrayEntry = years[years.length - 1]
       if (numberOfCommands === 0) {
         this.log('info', `No commands found for period ${years[i]}`)
+        if (years[i] === lastYearsArrayEntry) {
+          this.log('info', 'This was the last year found')
+          break
+        }
         await this.navigateToNextPeriod(years[i + 1])
         continue
+      }
+      if (years[i] === lastYearsArrayEntry) {
+        this.log('info', 'This was the last year found')
+        break
       }
       this.log(
         'info',
@@ -13094,16 +13110,17 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
           this.log('info', 'One more page detected, proceeding')
           await this.runInWorker('click', '.a-last > a')
           await this.waitForElementInWorker('.num-orders')
+          await this.runInWorkerUntilTrue({
+            method: 'waitForOrdersLoading',
+            args: [numberOfCommands]
+          })
           await this.runInWorker('deleteElement', '.num-orders')
           j++
         } else {
           this.log('info', 'no more page for this period')
         }
       }
-      if (i + 1 === years.length) {
-        this.log('info', 'This was the last year found')
-        break
-      }
+
       this.log('info', 'Fetching for this period ends, getting to next period')
       // If the period selector is not visible in the webview frame, the following function cannot click
       // on the list box button. To prevent this happening, we need to scroll the webview back up
@@ -13122,11 +13139,13 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
 
   // W
   async clickNextYear(period) {
+    this.log('info', 'clickNextYear starts')
     document.querySelector(`a[data-value*="${period}"`).click()
   }
 
   // W
   async getYears() {
+    this.log('info', 'getYears starts')
     return Array.from(document.querySelectorAll("[name='orderFilter'] option"))
       .map(el => el.value)
       .filter(period => period.includes('year'))
@@ -13229,22 +13248,28 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
   }
 
   makeBillDownloadLinkVisible(number) {
-    this.clickBillButton(document.querySelectorAll('.js-order-card')[number])
+    this.log('info', 'makeBillDownloadLinkVisible starts')
+    const orders = document.querySelectorAll('.js-order-card')
+    this.clickBillButton(orders[number])
   }
 
   clickBillButton(order) {
+    this.log('info', 'clickBillButton starts')
     order.querySelectorAll('.a-popover-trigger').forEach(popover => {
       if (popover.textContent.includes('Facture')) {
         popover.click()
       } else {
         order.querySelectorAll('.a-link-normal').forEach(element => {
-          if (element.textContent.includes('Facture')) element.click()
+          if (element.textContent.includes('Facture')) {
+            element.click()
+          }
         })
       }
     })
   }
 
   computeCommands(order, orderNumber) {
+    this.log('info', 'computeCommands starts')
     const [foundCommandDate, foundCommandPrice, ,] =
       order.querySelectorAll('.value')
     const amount = foundCommandPrice.textContent.trim().substring(1)
@@ -13290,6 +13315,13 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
       // } > ul > li > span > a[href*="/generated_invoices"]`
     )
     let urlsArray = []
+    if (urlsArray.length === 0) {
+      this.log(
+        'info',
+        'Found an article with no bill attached to it, jumping this bill'
+      )
+      return null
+    }
     for (const singleUrl of foundUrls) {
       const href = singleUrl.getAttribute('href')
 
@@ -13317,7 +13349,6 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
       fileAttributes: {
         metadata: {
           contentAuthor: 'amazon',
-          // datetime: new Date(parsedDate),
           datetime: new Date(formattedDate),
           datetimeLabel: 'issueDate',
           carbonCopy: true
@@ -13350,7 +13381,34 @@ class AmazonContentScript extends cozy_clisk_dist_contentscript__WEBPACK_IMPORTE
   }
 
   scrollToTop() {
+    this.log('info', 'scrollToTop starts')
     window.scrollTo({ top: 0, behavior: 'instant' })
+  }
+
+  async waitForOrdersLoading(numberOfOrders) {
+    this.log('info', 'waitForOrdersLoading starts')
+    let maxPerPage = 10
+
+    await (0,p_wait_for__WEBPACK_IMPORTED_MODULE_2__["default"])(
+      () => {
+        let foundOrders = document.querySelectorAll('.js-order-card').length
+        if (!foundOrders === numberOfOrders && foundOrders < maxPerPage) {
+          return false
+        } else {
+          return true
+        }
+      },
+      {
+        interval: 500,
+        timeout: {
+          milliseconds: 30000,
+          message: new p_wait_for__WEBPACK_IMPORTED_MODULE_2__.TimeoutError(
+            `waitForOrdersLoading timed out after 30000 ms`
+          )
+        }
+      }
+    )
+    return true
   }
 
   checkIfHasMorePage() {
@@ -13379,6 +13437,7 @@ connector
       'makeBillDownloadLinkVisible',
       'getNumberOfCardsPerPage',
       'scrollToTop',
+      'waitForOrdersLoading',
       'checkIfHasMorePage'
     ]
   })
