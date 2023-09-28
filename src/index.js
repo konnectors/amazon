@@ -3,11 +3,14 @@ import { format, parse } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import Minilog from '@cozy/minilog'
 import waitFor, { TimeoutError } from 'p-wait-for'
+import { Q } from 'cozy-client/dist/queries/dsl'
 
 const log = Minilog('ContentScript')
 Minilog.enable()
 
 const baseUrl = 'https://www.amazon.fr'
+// TODO use a flag to change this value
+let FORCE_FETCH_ALL = false
 // const orderUrl = `${baseUrl}/gp/your-account/order-history`
 const vendor = 'amazon'
 
@@ -192,6 +195,19 @@ class AmazonContentScript extends ContentScript {
   // P
   async fetch(context) {
     this.log('info', 'Starting fetch')
+    const { trigger } = context
+    // force fetch all data (the long way) when last trigger execution is older than 30 days
+    // or when the last job was an error
+    const isLastJobError =
+      trigger.current_state?.last_failure > trigger.current_state?.last_success
+    const distanceInDays = getDateDistanceInDays(
+      trigger.current_state?.last_execution
+    )
+    if (distanceInDays >= 30 || isLastJobError) {
+      this.log('debug', `isLastJobError: ${isLastJobError}`)
+      this.log('debug', `distanceInDays: ${distanceInDays}`)
+      FORCE_FETCH_ALL = true
+    }
     if (this.store && (this.store.email || this.store.password)) {
       await this.saveCredentials(this.store)
     }
@@ -199,8 +215,12 @@ class AmazonContentScript extends ContentScript {
     await this.clickAndWait('#nav_prefetch_yourorders', "[name='orderFilter']")
     const years = await this.runInWorker('getYears')
     this.log('debug', 'Years :' + years)
+    if (!FORCE_FETCH_ALL) {
+      // If false, we just need the first year of bills
+      years.length = 1
+    }
+    await this.runInWorker('deleteElement', '.num-orders')
     await this.navigateToNextPeriod(years[0])
-
     for (let i = 0; i < years.length; i++) {
       this.log('debug', 'Saving year ' + years[i])
       await Promise.race([
@@ -208,7 +228,10 @@ class AmazonContentScript extends ContentScript {
         this.waitForElementInWorker('.js-order-card')
       ])
       await this.waitForElementInWorker('.num-orders')
-      let numberOfCommands = await this.runInWorker('getNumberOfCommands')
+      let numberOfCommands = await this.runInWorkerUntilTrue({
+        method: 'getNumberOfCommands'
+      })
+      this.log('debug', `numberOfCommands : ${numberOfCommands}`)
       await this.runInWorkerUntilTrue({
         method: 'waitForOrdersLoading',
         args: [numberOfCommands]
@@ -224,10 +247,6 @@ class AmazonContentScript extends ContentScript {
         await this.navigateToNextPeriod(years[i + 1])
         continue
       }
-      if (years[i] === lastYearsArrayEntry) {
-        this.log('info', 'This was the last year found')
-        break
-      }
       this.log(
         'info',
         `found ${numberOfCommands} commands for this year, fetching them`
@@ -238,6 +257,7 @@ class AmazonContentScript extends ContentScript {
       while (hasMorePage) {
         this.log('info', `fetching bills for page ${j}`)
         const pageBills = await this.fetchPeriod({
+          context,
           period: years[i],
           page: j,
           numberOfCommands
@@ -265,7 +285,12 @@ class AmazonContentScript extends ContentScript {
         }
       }
 
-      this.log('info', 'Fetching for this period ends, getting to next period')
+      // this.log('info', 'Fetching for this period ends, getting to next period')
+      this.log('info', 'Fetching for this period ends, checking next period')
+      if (years[i] === lastYearsArrayEntry) {
+        this.log('info', 'This was the last year found')
+        break
+      }
       // If the period selector is not visible in the webview frame, the following function cannot click
       // on the list box button. To prevent this happening, we need to scroll the webview back up
       // to the top of the page
@@ -296,10 +321,24 @@ class AmazonContentScript extends ContentScript {
   }
 
   // W
-  getNumberOfCommands() {
+  async getNumberOfCommands() {
     this.log('info', 'getNumberOfCommands starts')
-    const element = document.querySelector('.num-orders').textContent
-    const numberOfCommands = parseInt(element.split(' ')[0])
+    let numberOfCommands
+    await waitFor(
+      () => {
+        const element = document.querySelector('.num-orders').textContent
+        if (element.includes('commande')) {
+          numberOfCommands = parseInt(element.split(' ')[0])
+          return true
+        } else {
+          return false
+        }
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
     return numberOfCommands
   }
 
@@ -308,7 +347,36 @@ class AmazonContentScript extends ContentScript {
       'debug',
       `Fetching the list of orders for page ${infos.page} of period ${infos.period}`
     )
-    const numberOfCards = await this.runInWorker('getNumberOfCardsPerPage')
+    const { sourceAccountIdentifier, manifest } = infos.context
+    this.log(
+      'info',
+      `{sourceAccountIdentifier, manifest} : ${JSON.stringify({
+        sourceAccountIdentifier,
+        manifest
+      })}`
+    )
+    let numberOfCards = await this.runInWorker('getNumberOfCardsPerPage')
+    if (!FORCE_FETCH_ALL) {
+      const existingBills = await this.queryAll(
+        Q('io.cozy.files')
+          .where({
+            'cozyMetadata.sourceAccountIdentifier': sourceAccountIdentifier,
+            'cozyMetadata.createdByApp': manifest.slug,
+            trashed: false
+          })
+          .indexFields([
+            'cozyMetadata.sourceAccountIdentifier',
+            'cozyMetadata.createdByApp',
+            'metadata.datetime'
+          ])
+      )
+      const existingBill = existingBills?.[0]
+      const lastFetchedOrderDate = existingBill.attributes.metadata.datetime
+      numberOfCards = await this.runInWorker(
+        'getNumberOfNewOrders',
+        lastFetchedOrderDate
+      )
+    }
     for (let i = 0; i < numberOfCards; i++) {
       await waitFor(
         async () => {
@@ -329,7 +397,7 @@ class AmazonContentScript extends ContentScript {
       )
       this.log('info', 'element visible, continue')
     }
-    const pageBills = await this.runInWorker('fetchBills')
+    const pageBills = await this.runInWorker('fetchBills', numberOfCards)
     return pageBills
   }
 
@@ -359,10 +427,10 @@ class AmazonContentScript extends ContentScript {
     }
   }
 
-  async fetchBills() {
+  async fetchBills(numberOfCards) {
     this.log('info', 'fetchBills starts')
     let foundOrders = document.querySelectorAll('.js-order-card')
-    const numberOfOrders = foundOrders.length
+    const numberOfOrders = numberOfCards
     let commandsToBills = []
     for (let i = 0; i < numberOfOrders; i++) {
       const commands = await this.computeCommands(foundOrders[i], i)
@@ -459,16 +527,8 @@ class AmazonContentScript extends ContentScript {
       // } > ul > li > span > a[href*="/generated_invoices"]`
     )
     let urlsArray = []
-    if (urlsArray.length === 0) {
-      this.log(
-        'info',
-        'Found an article with no bill attached to it, jumping this bill'
-      )
-      return null
-    }
     for (const singleUrl of foundUrls) {
       const href = singleUrl.getAttribute('href')
-
       // This code is used to get the "récépissé" file you can download in place of a bill sometimes
       // The connector gets a CORS error when trying to download this kind of file. No requestOptions seems to appears
       // when given to the file, so we just keep this code around for later investigations.
@@ -479,6 +539,13 @@ class AmazonContentScript extends ContentScript {
       //   continue
       // }
       urlsArray.push(baseUrl + href)
+    }
+    if (urlsArray.length === 0) {
+      this.log(
+        'info',
+        'Found an article with no bill attached to it, jumping this bill'
+      )
+      return null
     }
     const fileurl = urlsArray.length > 1 ? urlsArray : urlsArray[0]
     let command = {
@@ -522,6 +589,26 @@ class AmazonContentScript extends ContentScript {
     this.log('info', 'getNumberOfCardsPerPage starts')
     const numberOfCards = document.querySelectorAll('.js-order-card').length
     return numberOfCards
+  }
+
+  getNumberOfNewOrders(lastFetchedOrderDate) {
+    this.log('info', '📍️ getNumberOfNewOrders starts')
+    const newOrders = []
+    const pageOrders = document.querySelectorAll('.js-order-card')
+    for (const order of pageOrders) {
+      const orderDateElement = order.querySelector('.value')
+      const commandDate = orderDateElement.textContent.trim()
+      const parsedDate = parse(commandDate, 'd MMMM yyyy', new Date(), {
+        locale: fr
+      })
+      if (new Date(parsedDate) > new Date(lastFetchedOrderDate)) {
+        this.log('info', 'Found a new order, adding it to the fetching list')
+        newOrders.push(parsedDate)
+        continue
+      }
+      this.log('info', 'This order has already been fetched, continue')
+    }
+    return newOrders.length
   }
 
   scrollToTop() {
@@ -580,6 +667,7 @@ connector
       'fetchBills',
       'makeBillDownloadLinkVisible',
       'getNumberOfCardsPerPage',
+      'getNumberOfNewOrders',
       'scrollToTop',
       'waitForOrdersLoading',
       'checkIfHasMorePage'
@@ -588,3 +676,10 @@ connector
   .catch(err => {
     log.warn(err)
   })
+
+function getDateDistanceInDays(dateString) {
+  const distanceMs = Date.now() - new Date(dateString).getTime()
+  const days = 1000 * 60 * 60 * 24
+
+  return Math.floor(distanceMs / days)
+}
