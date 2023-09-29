@@ -200,12 +200,14 @@ class AmazonContentScript extends ContentScript {
     // or when the last job was an error
     const isLastJobError =
       trigger.current_state?.last_failure > trigger.current_state?.last_success
+    const hasLastExecution = Boolean(trigger.current_state?.last_execution)
     const distanceInDays = getDateDistanceInDays(
       trigger.current_state?.last_execution
     )
-    if (distanceInDays >= 30 || isLastJobError) {
+    if (distanceInDays >= 30 || !hasLastExecution || isLastJobError) {
       this.log('debug', `isLastJobError: ${isLastJobError}`)
       this.log('debug', `distanceInDays: ${distanceInDays}`)
+      this.log('debug', `hasLastExecution: ${hasLastExecution}`)
       FORCE_FETCH_ALL = true
     }
     if (this.store && (this.store.email || this.store.password)) {
@@ -231,6 +233,9 @@ class AmazonContentScript extends ContentScript {
       let numberOfCommands = await this.runInWorkerUntilTrue({
         method: 'getNumberOfCommands'
       })
+      if (numberOfCommands === 'zero') {
+        numberOfCommands === 0
+      }
       this.log('debug', `numberOfCommands : ${numberOfCommands}`)
       await this.runInWorkerUntilTrue({
         method: 'waitForOrdersLoading',
@@ -284,8 +289,6 @@ class AmazonContentScript extends ContentScript {
           this.log('info', 'no more page for this period')
         }
       }
-
-      // this.log('info', 'Fetching for this period ends, getting to next period')
       this.log('info', 'Fetching for this period ends, checking next period')
       if (years[i] === lastYearsArrayEntry) {
         this.log('info', 'This was the last year found')
@@ -339,6 +342,12 @@ class AmazonContentScript extends ContentScript {
         timeout: 30 * 1000
       }
     )
+    this.log('info', 'returning numberOfCommands')
+    // As zero of number type is consider falsy by javascript,
+    // we cannot just return '0' from the function as it await for a truthy value to resolve
+    if (numberOfCommands === 0) {
+      return 'zero'
+    }
     return numberOfCommands
   }
 
@@ -485,7 +494,7 @@ class AmazonContentScript extends ContentScript {
     const [foundCommandDate, foundCommandPrice, ,] =
       order.querySelectorAll('.value')
     const amount = foundCommandPrice.textContent.trim().substring(1)
-    if (amount.match('crédit audio')) {
+    if (amount.match(/crédit(s)? audio/g)) {
       this.log('info', 'Found an audiobook, jumping this bill')
       return null
     }
