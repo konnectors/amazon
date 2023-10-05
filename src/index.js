@@ -16,7 +16,7 @@ const vendor = 'amazon'
 
 class AmazonContentScript extends ContentScript {
   // P
-  async ensureAuthenticated(account) {
+  async ensureAuthenticated({ account }) {
     this.log('info', 'Starting ensureAuth')
     if (!account) {
       await this.ensureNotAuthenticated()
@@ -214,7 +214,7 @@ class AmazonContentScript extends ContentScript {
       await this.saveCredentials(this.store)
     }
     await this.waitForElementInWorker('#nav_prefetch_yourorders')
-    await this.clickAndWait('#nav_prefetch_yourorders', "[name='orderFilter']")
+    await this.clickAndWait('#nav_prefetch_yourorders', '#time-filter')
     const years = await this.runInWorker('getYears')
     this.log('debug', 'Years :' + years)
     if (!FORCE_FETCH_ALL) {
@@ -227,7 +227,7 @@ class AmazonContentScript extends ContentScript {
       this.log('debug', 'Saving year ' + years[i])
       await Promise.race([
         this.waitForElementInWorker('#rhf-container'),
-        this.waitForElementInWorker('.js-order-card')
+        this.waitForElementInWorker('div.js-order-card:not(.a-spacing-base)')
       ])
       await this.waitForElementInWorker('.num-orders')
       let numberOfCommands = await this.runInWorkerUntilTrue({
@@ -304,8 +304,19 @@ class AmazonContentScript extends ContentScript {
 
   async navigateToNextPeriod(period) {
     this.log('info', 'navigateToNextPeriod starts')
-    await this.waitForElementInWorker('[name="orderFilter"]')
-    await this.clickAndWait('[name="orderFilter"]', 'ul[role="listbox"]')
+    await this.waitForElementInWorker('#time-filter')
+    await waitFor(
+      async () => {
+        await this.runInWorker('click', '#time-filter')
+        const listIsVisible = await this.isElementInWorker('ul[role="listbox"]')
+        if (listIsVisible) return true
+        return false
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
     await this.runInWorker('click', `[data-value*="${period}"]`)
   }
 
@@ -318,7 +329,7 @@ class AmazonContentScript extends ContentScript {
   // W
   async getYears() {
     this.log('info', 'getYears starts')
-    return Array.from(document.querySelectorAll("[name='orderFilter'] option"))
+    return Array.from(document.querySelectorAll('#time-filter option'))
       .map(el => el.value)
       .filter(period => period.includes('year'))
   }
@@ -390,9 +401,10 @@ class AmazonContentScript extends ContentScript {
       await waitFor(
         async () => {
           await this.runInWorker('makeBillDownloadLinkVisible', i)
-          return await this.isElementInWorker(
+          const isOk = await this.isElementInWorker(
             `#a-popover-content-${i + 1} > ul > li > span > .a-link-normal`
           )
+          return isOk
         },
         {
           interval: 1000,
@@ -431,14 +443,18 @@ class AmazonContentScript extends ContentScript {
           sourceAccountIdentifier: credentials.email
         }
       } else {
-        this.log('debug', 'No credentials found')
+        throw new Error(
+          'No credentials were found, cannot give a sourceAccountIdentifier, aborting execution'
+        )
       }
     }
   }
 
   async fetchBills(numberOfCards) {
     this.log('info', 'fetchBills starts')
-    let foundOrders = document.querySelectorAll('.js-order-card')
+    let foundOrders = document.querySelectorAll(
+      'div.js-order-card:not(.a-spacing-base)'
+    )
     const numberOfOrders = numberOfCards
     let commandsToBills = []
     for (let i = 0; i < numberOfOrders; i++) {
@@ -470,7 +486,9 @@ class AmazonContentScript extends ContentScript {
 
   makeBillDownloadLinkVisible(number) {
     this.log('info', 'makeBillDownloadLinkVisible starts')
-    const orders = document.querySelectorAll('.js-order-card')
+    const orders = document.querySelectorAll(
+      'div.js-order-card:not(.a-spacing-base)'
+    )
     this.clickBillButton(orders[number])
   }
 
@@ -596,14 +614,18 @@ class AmazonContentScript extends ContentScript {
 
   getNumberOfCardsPerPage() {
     this.log('info', 'getNumberOfCardsPerPage starts')
-    const numberOfCards = document.querySelectorAll('.js-order-card').length
+    const numberOfCards = document.querySelectorAll(
+      'div.js-order-card:not(.a-spacing-base)'
+    ).length
     return numberOfCards
   }
 
   getNumberOfNewOrders(lastFetchedOrderDate) {
     this.log('info', '📍️ getNumberOfNewOrders starts')
     const newOrders = []
-    const pageOrders = document.querySelectorAll('.js-order-card')
+    const pageOrders = document.querySelectorAll(
+      'div.js-order-card:not(.a-spacing-base)'
+    )
     for (const order of pageOrders) {
       const orderDateElement = order.querySelector('.value')
       const commandDate = orderDateElement.textContent.trim()
@@ -631,7 +653,9 @@ class AmazonContentScript extends ContentScript {
 
     await waitFor(
       () => {
-        let foundOrders = document.querySelectorAll('.js-order-card').length
+        let foundOrders = document.querySelectorAll(
+          'div.js-order-card:not(.a-spacing-base)'
+        ).length
         if (!foundOrders === numberOfOrders && foundOrders < maxPerPage) {
           return false
         } else {
