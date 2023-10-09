@@ -274,7 +274,10 @@ class AmazonContentScript extends ContentScript {
           contentType: 'application/pdf',
           qualificationLabel: 'other_invoice'
         })
-        hasMorePage = await this.runInWorker('checkIfHasMorePage')
+        hasMorePage = await this.runInWorker(
+          'checkIfHasMorePage',
+          FORCE_FETCH_ALL
+        )
         if (hasMorePage) {
           this.log('info', 'One more page detected, proceeding')
           await this.runInWorker('click', '.a-last > a')
@@ -368,13 +371,6 @@ class AmazonContentScript extends ContentScript {
       `Fetching the list of orders for page ${infos.page} of period ${infos.period}`
     )
     const { sourceAccountIdentifier, manifest } = infos.context
-    this.log(
-      'info',
-      `{sourceAccountIdentifier, manifest} : ${JSON.stringify({
-        sourceAccountIdentifier,
-        manifest
-      })}`
-    )
     let numberOfCards = await this.runInWorker('getNumberOfCardsPerPage')
     if (!FORCE_FETCH_ALL) {
       const existingBills = await this.queryAll(
@@ -385,17 +381,25 @@ class AmazonContentScript extends ContentScript {
             trashed: false
           })
           .indexFields([
+            'metadata.datetime',
             'cozyMetadata.sourceAccountIdentifier',
-            'cozyMetadata.createdByApp',
-            'metadata.datetime'
+            'cozyMetadata.createdByApp'
           ])
+          .sortBy([{ 'metadata.datetime': 'desc' }])
       )
-      const existingBill = existingBills?.[0]
-      const lastFetchedOrderDate = existingBill.attributes.metadata.datetime
-      numberOfCards = await this.runInWorker(
-        'getNumberOfNewOrders',
-        lastFetchedOrderDate
-      )
+      if (existingBills.length === 0) {
+        this.log(
+          'info',
+          'No files found in the cozy, fetching only the first page for current year'
+        )
+      } else {
+        const existingBill = existingBills?.[0]
+        const lastFetchedOrderDate = existingBill.attributes.metadata.datetime
+        numberOfCards = await this.runInWorker(
+          'getNumberOfNewOrders',
+          lastFetchedOrderDate
+        )
+      }
     }
     for (let i = 0; i < numberOfCards; i++) {
       await waitFor(
@@ -655,10 +659,30 @@ class AmazonContentScript extends ContentScript {
       () => {
         let foundOrders = document.querySelectorAll(
           'div.js-order-card:not(.a-spacing-base)'
-        ).length
-        if (!foundOrders === numberOfOrders && foundOrders < maxPerPage) {
+        )
+        let foundOrdersLength = foundOrders.length
+        if (
+          !foundOrdersLength === numberOfOrders &&
+          foundOrdersLength < maxPerPage
+        ) {
           return false
         } else {
+          this.log('info', 'foundOrders length match numberOfOrders')
+          for (const foundOrder of foundOrders) {
+            const foundOrderInfos = foundOrder.querySelectorAll(
+              'div[class*="a-fixed-left-grid a-spacing-"]'
+            )
+            for (const info of foundOrderInfos) {
+              const isFullfilled = Boolean(info.innerText.length > 10)
+              if (!isFullfilled) {
+                this.log(
+                  'info',
+                  'One article is not loaded, waiting for all articles to load properly'
+                )
+                return false
+              }
+            }
+          }
           return true
         }
       },
@@ -675,8 +699,12 @@ class AmazonContentScript extends ContentScript {
     return true
   }
 
-  checkIfHasMorePage() {
+  checkIfHasMorePage(fetchAll) {
     this.log('info', 'checkIfHasMorePage starts')
+    if (!fetchAll) {
+      this.log('info', 'fetchAll is false, no need to scrap other pages')
+      return false
+    }
     const element = document.querySelector('.a-last')
     if (element) {
       const isEnabled = !element.classList.contains('a-disabled')
