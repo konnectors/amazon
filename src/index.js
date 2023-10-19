@@ -9,6 +9,8 @@ const log = Minilog('ContentScript')
 Minilog.enable()
 
 const baseUrl = 'https://www.amazon.fr'
+const desktopUserAgent =
+  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/118.0'
 let timeFilterSelector
 // TODO use a flag to change this value
 let FORCE_FETCH_ALL = false
@@ -16,21 +18,44 @@ let FORCE_FETCH_ALL = false
 const vendor = 'amazon'
 
 class AmazonContentScript extends ContentScript {
+  async setUserAgent() {
+    this.log('info', '📍️ setUserAgent starts')
+    await this.bridge.call('setUserAgent', desktopUserAgent)
+  }
+
+  async navigateToLoginForm() {
+    this.log('info', '📍️ navigateToLoginForm starts')
+    await this.goto(baseUrl)
+    await Promise.race([
+      this.waitForElementInWorker('#nav-greeting-name'),
+      this.waitForElementInWorker('#nav-link-accountList')
+    ])
+    if (await this.isElementInWorker('#nav-greeting-name')) {
+      await this.setUserAgent()
+      await this.evaluateInWorker(function reloadWindow() {
+        window.location.reload()
+      })
+      await this.runInWorkerUntilTrue({ method: 'checkUserAgentReload' })
+    }
+    if (await this.isElementInWorker('#nav-link-accountList')) {
+      await this.runInWorker('click', '#nav-link-accountList')
+    }
+    await Promise.race([
+      this.waitForElementInWorker('#ap_email'),
+      this.waitForElementInWorker('#nav-item-signout')
+    ])
+  }
+
   // P
   async ensureAuthenticated({ account }) {
-    this.log('info', 'Starting ensureAuth')
+    this.log('info', '📍️ Starting ensureAuthenticated')
+    await this.setUserAgent()
     if (!account) {
       await this.ensureNotAuthenticated()
     }
-    await this.bridge.call(
-      'setUserAgent',
-      'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
-    )
-    await this.bridge.call('setWorkerState', {
-      url: baseUrl,
-      visible: false
-    })
-    await this.waitForElementInWorker('#nav-link-accountList')
+    if (!(await this.isElementInWorker('#ap_email'))) {
+      await this.navigateToLoginForm()
+    }
     const authenticated = await this.runInWorker('checkAuthenticated')
     this.log('debug', 'Authenticated : ' + authenticated)
     if (authenticated) {
@@ -47,34 +72,39 @@ class AmazonContentScript extends ContentScript {
         }
       } else {
         await this.showLoginFormAndWaitForAuthentication()
+        if (!this.store?.email || !this.store?.password) {
+          throw new Error(
+            'One or both credentials interception went wrong, aborting execution.'
+          )
+        }
       }
     }
     return true
   }
 
   async ensureNotAuthenticated() {
-    this.log('info', 'ensureNotAuthenticated starts')
-    await this.bridge.call('setWorkerState', {
-      url: baseUrl,
-      visible: false
-    })
-    await this.waitForElementInWorker('#nav-cart-count')
-    await Promise.race([
-      this.waitForElementInWorker('#nav-button-avatar'),
-      this.waitForElementInWorker('a[href*="/gp/flex/sign-out.html?"]')
-    ])
+    this.log('info', '📍️ ensureNotAuthenticated starts')
+    await this.navigateToLoginForm()
     const isConnected = await this.isElementInWorker(
-      'a[href*="/gp/flex/sign-out.html?"]'
+      'a[href*="/gp/flex/sign-out"]'
     )
     if (isConnected) {
-      await this.runInWorker('click', 'a[href*="/gp/flex/sign-out.html?"]')
-      await this.waitForElementInWorker('#ap_email_login')
+      await this.runInWorker('click', 'a[href*="/gp/flex/sign-out"]')
+      await this.waitForElementInWorker('#ap_email')
     }
   }
 
   // W
   async checkAuthenticated() {
-    this.log('info', 'checkAuthenticated starts')
+    this.log('info', '📍️ checkAuthenticated starts')
+    const mailInput = document.querySelector('#ap_email')
+    const passwordInput = document.querySelector('#ap_password')
+    if (mailInput) {
+      await this.setListenerLogin()
+    }
+    if (passwordInput) {
+      await this.setListenerPassword()
+    }
     const result = Boolean(
       document.querySelector('a[href*="/gp/flex/sign-out.html?"]')
     )
@@ -84,14 +114,7 @@ class AmazonContentScript extends ContentScript {
 
   // P
   async tryAutoLogin(credentials) {
-    this.log('info', 'tryAutoLogin starts')
-    // Bring login form via main page
-    await this.bridge.call('setWorkerState', {
-      url: baseUrl,
-      visible: false
-    })
-    await this.waitForElementInWorker('#nav-link-accountList')
-    await this.runInWorker('click', '#nav-link-accountList')
+    this.log('info', '📍️ tryAutoLogin starts')
     await Promise.all([
       this.waitForElementInWorker('#ap_email'),
       this.waitForElementInWorker('#continue')
@@ -116,9 +139,8 @@ class AmazonContentScript extends ContentScript {
     await this.runInWorker('click', loginButtonSelector)
   }
 
-  // W
   findAndSendCredentials() {
-    this.log('info', 'findAndSendCredentials starts')
+    this.log('info', '📍️ findAndSendCredentials starts')
     const emailField = document.querySelector('#ap_email')
     const passwordField = document.querySelector('#ap_password')
     this.log('debug', 'Executing findAndSendCredentials')
@@ -137,25 +159,12 @@ class AmazonContentScript extends ContentScript {
 
   // P
   async showLoginFormAndWaitForAuthentication() {
-    this.log('info', 'showLoginFormAndWaitForAuthentication start')
-    await this.bridge.call('setWorkerState', {
-      url: baseUrl,
-      visible: false
-    })
-    await this.waitForElementInWorker('#nav-link-accountList')
-    await this.clickAndWait('#nav-link-accountList', '#ap_email')
-
+    this.log('info', '📍️ showLoginFormAndWaitForAuthentication start')
     await this.bridge.call('setWorkerState', {
       visible: true
     })
-
-    this.log('debug', 'Waiting on login form')
-    await this.runInWorker('setListenerLogin')
-    await this.waitForElementInWorker('[name="rememberMe"]')
-    await this.runInWorker('checkingBox')
-
-    await this.runInWorker('setListenerPassword')
     await this.runInWorkerUntilTrue({ method: 'waitForAuthenticated' })
+    this.unblockWorkerInteractions()
     await this.bridge.call('setWorkerState', {
       visible: false
     })
@@ -195,7 +204,7 @@ class AmazonContentScript extends ContentScript {
 
   // P
   async fetch(context) {
-    this.log('info', 'Starting fetch')
+    this.log('info', '📍️ Starting fetch')
     const { trigger } = context
     // force fetch all data (the long way) when last trigger execution is older than 30 days
     // or when the last job was an error
@@ -211,8 +220,13 @@ class AmazonContentScript extends ContentScript {
       this.log('debug', `hasLastExecution: ${hasLastExecution}`)
       FORCE_FETCH_ALL = true
     }
-    if (this.store && (this.store.email || this.store.password)) {
-      await this.saveCredentials(this.store)
+    if (this.store?.email && this.store?.password) {
+      this.log('info', 'Saving credentials...')
+      const userCredentials = {
+        email: this.store.email,
+        password: this.store.password
+      }
+      await this.saveCredentials(userCredentials)
     }
     await this.waitForElementInWorker('#nav_prefetch_yourorders')
     await this.runInWorker('click', '#nav_prefetch_yourorders')
@@ -309,6 +323,28 @@ class AmazonContentScript extends ContentScript {
     }
   }
 
+  async checkUserAgentReload() {
+    this.log('info', '📍️ checkUserAgentReload starts')
+    await waitFor(
+      () => {
+        if (
+          navigator.userAgent === desktopUserAgent &&
+          Boolean(document.querySelector('#nav-link-accountList'))
+        ) {
+          this.log('info', 'userAgent change is successfull')
+          return true
+        }
+        this.log('info', 'userAgent reload not ready yet')
+        return false
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
+    return true
+  }
+
   async determineDropdownId() {
     this.log('info', '📍️ determineDropdownId starts')
     let selector
@@ -328,7 +364,7 @@ class AmazonContentScript extends ContentScript {
   }
 
   async navigateToNextPeriod(period) {
-    this.log('info', 'navigateToNextPeriod starts')
+    this.log('info', '📍️ navigateToNextPeriod starts')
     await this.waitForElementInWorker(`${timeFilterSelector}`)
     await waitFor(
       async () => {
@@ -347,13 +383,13 @@ class AmazonContentScript extends ContentScript {
 
   // W
   async clickNextYear(period) {
-    this.log('info', 'clickNextYear starts')
+    this.log('info', '📍️ clickNextYear starts')
     document.querySelector(`a[data-value*="${period}"`).click()
   }
 
   // W
   async getYears(selector) {
-    this.log('info', 'getYears starts')
+    this.log('info', '📍️ getYears starts')
     return Array.from(document.querySelectorAll(`${selector} option`))
       .map(el => el.value)
       .filter(period => period.includes('year'))
@@ -361,7 +397,7 @@ class AmazonContentScript extends ContentScript {
 
   // W
   async getNumberOfCommands() {
-    this.log('info', 'getNumberOfCommands starts')
+    this.log('info', '📍️ getNumberOfCommands starts')
     let numberOfCommands
     await waitFor(
       () => {
@@ -457,7 +493,7 @@ class AmazonContentScript extends ContentScript {
 
   // P
   async getUserDataFromWebsite() {
-    this.log('info', 'Starting getUserDataFromWebsite')
+    this.log('info', '📍️ Starting getUserDataFromWebsite')
     if (this.store && this.store.email) {
       return {
         sourceAccountIdentifier: this.store.email
@@ -477,7 +513,7 @@ class AmazonContentScript extends ContentScript {
   }
 
   async fetchBills(numberOfCards) {
-    this.log('info', 'fetchBills starts')
+    this.log('info', '📍️ fetchBills starts')
     let foundOrders = this.determineCardsToFetch()
     const numberOfOrders = numberOfCards
     let commandsToBills = []
@@ -530,7 +566,7 @@ class AmazonContentScript extends ContentScript {
   }
 
   computeCommands(order, orderNumber) {
-    this.log('info', 'computeCommands starts')
+    this.log('info', '📍️ computeCommands starts')
     const [foundCommandDate, foundCommandPrice, ,] =
       order.querySelectorAll('.value')
     const amount = foundCommandPrice.textContent.trim().substring(1)
@@ -635,7 +671,7 @@ class AmazonContentScript extends ContentScript {
   }
 
   getNumberOfCardsPerPage() {
-    this.log('info', 'getNumberOfCardsPerPage starts')
+    this.log('info', '📍️ getNumberOfCardsPerPage starts')
     const cardsToFetch = this.determineCardsToFetch()
     const numberOfCards = cardsToFetch.length
     return numberOfCards
@@ -667,7 +703,7 @@ class AmazonContentScript extends ContentScript {
   }
 
   async waitForOrdersLoading(numberOfOrders) {
-    this.log('info', 'waitForOrdersLoading starts')
+    this.log('info', '📍️ waitForOrdersLoading starts')
     let maxPerPage = 10
 
     await waitFor(
@@ -713,7 +749,7 @@ class AmazonContentScript extends ContentScript {
   }
 
   checkIfHasMorePage(fetchAll) {
-    this.log('info', 'checkIfHasMorePage starts')
+    this.log('info', '📍️ checkIfHasMorePage starts')
     if (!fetchAll) {
       this.log('info', 'fetchAll is false, no need to scrap other pages')
       return false
@@ -743,6 +779,7 @@ const connector = new AmazonContentScript()
 connector
   .init({
     additionalExposedMethodsNames: [
+      'checkUserAgentReload',
       'getYears',
       'checkingBox',
       'setListenerLogin',
