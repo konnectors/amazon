@@ -3,33 +3,58 @@ import { format, parse } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import Minilog from '@cozy/minilog'
 import waitFor, { TimeoutError } from 'p-wait-for'
-import { Q } from 'cozy-client/dist/queries/dsl'
 
 const log = Minilog('ContentScript')
 Minilog.enable()
 
 const baseUrl = 'https://www.amazon.fr'
+const desktopUserAgent =
+  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/118.0'
+let timeFilterSelector
 // TODO use a flag to change this value
 let FORCE_FETCH_ALL = false
 // const orderUrl = `${baseUrl}/gp/your-account/order-history`
 const vendor = 'amazon'
 
 class AmazonContentScript extends ContentScript {
+  async setUserAgent() {
+    this.log('info', '📍️ setUserAgent starts')
+    await this.bridge.call('setUserAgent', desktopUserAgent)
+  }
+
+  async navigateToLoginForm() {
+    this.log('info', '📍️ navigateToLoginForm starts')
+    await this.goto(baseUrl)
+    await Promise.race([
+      this.waitForElementInWorker('#nav-greeting-name'),
+      this.waitForElementInWorker('#nav-link-accountList')
+    ])
+    if (await this.isElementInWorker('#nav-greeting-name')) {
+      await this.setUserAgent()
+      await this.evaluateInWorker(function reloadWindow() {
+        window.location.reload()
+      })
+      await this.runInWorkerUntilTrue({ method: 'checkUserAgentReload' })
+    }
+    if (await this.isElementInWorker('#nav-link-accountList')) {
+      await this.runInWorker('click', '#nav-link-accountList')
+    }
+    await Promise.race([
+      this.waitForElementInWorker('#ap_email'),
+      this.waitForElementInWorker('#nav-item-signout')
+    ])
+  }
+
   // P
   async ensureAuthenticated({ account }) {
-    this.log('info', 'Starting ensureAuth')
+    this.log('info', '📍️ Starting ensureAuthenticated')
+    await this.setUserAgent()
     if (!account) {
       await this.ensureNotAuthenticated()
     }
-    await this.bridge.call(
-      'setUserAgent',
-      'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
-    )
-    await this.bridge.call('setWorkerState', {
-      url: baseUrl,
-      visible: false
-    })
-    await this.waitForElementInWorker('#nav-link-accountList')
+    if (!(await this.isElementInWorker('#ap_email'))) {
+      await this.navigateToLoginForm()
+    }
     const authenticated = await this.runInWorker('checkAuthenticated')
     this.log('debug', 'Authenticated : ' + authenticated)
     if (authenticated) {
@@ -46,34 +71,39 @@ class AmazonContentScript extends ContentScript {
         }
       } else {
         await this.showLoginFormAndWaitForAuthentication()
+        if (!this.store?.email || !this.store?.password) {
+          throw new Error(
+            'One or both credentials interception went wrong, aborting execution.'
+          )
+        }
       }
     }
     return true
   }
 
   async ensureNotAuthenticated() {
-    this.log('info', 'ensureNotAuthenticated starts')
-    await this.bridge.call('setWorkerState', {
-      url: baseUrl,
-      visible: false
-    })
-    await this.waitForElementInWorker('#nav-cart-count')
-    await Promise.race([
-      this.waitForElementInWorker('#nav-button-avatar'),
-      this.waitForElementInWorker('a[href*="/gp/flex/sign-out.html?"]')
-    ])
+    this.log('info', '📍️ ensureNotAuthenticated starts')
+    await this.navigateToLoginForm()
     const isConnected = await this.isElementInWorker(
-      'a[href*="/gp/flex/sign-out.html?"]'
+      'a[href*="/gp/flex/sign-out"]'
     )
     if (isConnected) {
-      await this.runInWorker('click', 'a[href*="/gp/flex/sign-out.html?"]')
-      await this.waitForElementInWorker('#ap_email_login')
+      await this.runInWorker('click', 'a[href*="/gp/flex/sign-out"]')
+      await this.waitForElementInWorker('#ap_email')
     }
   }
 
   // W
   async checkAuthenticated() {
-    this.log('info', 'checkAuthenticated starts')
+    this.log('info', '📍️ checkAuthenticated starts')
+    const mailInput = document.querySelector('#ap_email')
+    const passwordInput = document.querySelector('#ap_password')
+    if (mailInput) {
+      await this.setListenerLogin()
+    }
+    if (passwordInput) {
+      await this.setListenerPassword()
+    }
     const result = Boolean(
       document.querySelector('a[href*="/gp/flex/sign-out.html?"]')
     )
@@ -83,14 +113,7 @@ class AmazonContentScript extends ContentScript {
 
   // P
   async tryAutoLogin(credentials) {
-    this.log('info', 'tryAutoLogin starts')
-    // Bring login form via main page
-    await this.bridge.call('setWorkerState', {
-      url: baseUrl,
-      visible: false
-    })
-    await this.waitForElementInWorker('#nav-link-accountList')
-    await this.runInWorker('click', '#nav-link-accountList')
+    this.log('info', '📍️ tryAutoLogin starts')
     await Promise.all([
       this.waitForElementInWorker('#ap_email'),
       this.waitForElementInWorker('#continue')
@@ -115,9 +138,8 @@ class AmazonContentScript extends ContentScript {
     await this.runInWorker('click', loginButtonSelector)
   }
 
-  // W
   findAndSendCredentials() {
-    this.log('info', 'findAndSendCredentials starts')
+    this.log('info', '📍️ findAndSendCredentials starts')
     const emailField = document.querySelector('#ap_email')
     const passwordField = document.querySelector('#ap_password')
     this.log('debug', 'Executing findAndSendCredentials')
@@ -136,25 +158,12 @@ class AmazonContentScript extends ContentScript {
 
   // P
   async showLoginFormAndWaitForAuthentication() {
-    this.log('info', 'showLoginFormAndWaitForAuthentication start')
-    await this.bridge.call('setWorkerState', {
-      url: baseUrl,
-      visible: false
-    })
-    await this.waitForElementInWorker('#nav-link-accountList')
-    await this.clickAndWait('#nav-link-accountList', '#ap_email')
-
+    this.log('info', '📍️ showLoginFormAndWaitForAuthentication start')
     await this.bridge.call('setWorkerState', {
       visible: true
     })
-
-    this.log('debug', 'Waiting on login form')
-    await this.runInWorker('setListenerLogin')
-    await this.waitForElementInWorker('[name="rememberMe"]')
-    await this.runInWorker('checkingBox')
-
-    await this.runInWorker('setListenerPassword')
     await this.runInWorkerUntilTrue({ method: 'waitForAuthenticated' })
+    this.unblockWorkerInteractions()
     await this.bridge.call('setWorkerState', {
       visible: false
     })
@@ -194,7 +203,7 @@ class AmazonContentScript extends ContentScript {
 
   // P
   async fetch(context) {
-    this.log('info', 'Starting fetch')
+    this.log('info', '📍️ Starting fetch')
     const { trigger } = context
     // force fetch all data (the long way) when last trigger execution is older than 30 days
     // or when the last job was an error
@@ -204,30 +213,52 @@ class AmazonContentScript extends ContentScript {
     const distanceInDays = getDateDistanceInDays(
       trigger.current_state?.last_execution
     )
-    if (distanceInDays >= 30 || !hasLastExecution || isLastJobError) {
+    this.log('debug', `distanceInDays: ${distanceInDays}`)
+    if (distanceInDays >= 90 || !hasLastExecution || isLastJobError) {
       this.log('debug', `isLastJobError: ${isLastJobError}`)
-      this.log('debug', `distanceInDays: ${distanceInDays}`)
       this.log('debug', `hasLastExecution: ${hasLastExecution}`)
       FORCE_FETCH_ALL = true
     }
-    if (this.store && (this.store.email || this.store.password)) {
-      await this.saveCredentials(this.store)
+    if (this.store?.email && this.store?.password) {
+      this.log('info', 'Saving credentials...')
+      const userCredentials = {
+        email: this.store.email,
+        password: this.store.password
+      }
+      await this.saveCredentials(userCredentials)
     }
     await this.waitForElementInWorker('#nav_prefetch_yourorders')
-    await this.clickAndWait('#nav_prefetch_yourorders', '#time-filter')
-    const years = await this.runInWorker('getYears')
-    this.log('debug', 'Years :' + years)
+    await this.runInWorker('click', '#nav_prefetch_yourorders')
+    timeFilterSelector = await this.determineDropdownId()
+    let years = await this.runInWorker('getYears', timeFilterSelector)
     if (!FORCE_FETCH_ALL) {
-      // If false, we just need the first year of bills
-      years.length = 1
+      // If false, we just need the last period depending on the distanceInDays value
+      if (distanceInDays <= 30) {
+        this.log(
+          'info',
+          'lastExecution under or equals 30 days, fetching the last 30 days period'
+        )
+        years = ['last30']
+      }
+      if (distanceInDays > 30 && distanceInDays < 90) {
+        this.log(
+          'info',
+          'lastExecution between 30 and 90 days, fetching the last 3 months period'
+        )
+        years = ['months-3']
+      }
     }
-    await this.runInWorker('deleteElement', '.num-orders')
-    await this.navigateToNextPeriod(years[0])
+    if (years[0] !== 'months-3') {
+      await this.runInWorker('deleteElement', '.num-orders')
+      await this.navigateToNextPeriod(years[0])
+    }
+    this.log('debug', 'Years :' + years)
     for (let i = 0; i < years.length; i++) {
       this.log('debug', 'Saving year ' + years[i])
+      timeFilterSelector = await this.determineDropdownId()
       await Promise.race([
         this.waitForElementInWorker('#rhf-container'),
-        this.waitForElementInWorker('div.js-order-card:not(.a-spacing-base)')
+        this.waitForElementInWorker('.js-order-card')
       ])
       await this.waitForElementInWorker('.num-orders')
       let numberOfCommands = await this.runInWorkerUntilTrue({
@@ -261,6 +292,7 @@ class AmazonContentScript extends ContentScript {
       let hasMorePage = true
       while (hasMorePage) {
         this.log('info', `fetching bills for page ${j}`)
+        timeFilterSelector = await this.determineDropdownId()
         const pageBills = await this.fetchPeriod({
           context,
           period: years[i],
@@ -274,10 +306,7 @@ class AmazonContentScript extends ContentScript {
           contentType: 'application/pdf',
           qualificationLabel: 'other_invoice'
         })
-        hasMorePage = await this.runInWorker(
-          'checkIfHasMorePage',
-          FORCE_FETCH_ALL
-        )
+        hasMorePage = await this.runInWorker('checkIfHasMorePage')
         if (hasMorePage) {
           this.log('info', 'One more page detected, proceeding')
           await this.runInWorker('click', '.a-last > a')
@@ -305,12 +334,52 @@ class AmazonContentScript extends ContentScript {
     }
   }
 
+  async checkUserAgentReload() {
+    this.log('info', '📍️ checkUserAgentReload starts')
+    await waitFor(
+      () => {
+        if (
+          navigator.userAgent === desktopUserAgent &&
+          Boolean(document.querySelector('#nav-link-accountList'))
+        ) {
+          this.log('info', 'userAgent change is successfull')
+          return true
+        }
+        this.log('info', 'userAgent reload not ready yet')
+        return false
+      },
+      {
+        interval: 1000,
+        timeout: 30 * 1000
+      }
+    )
+    return true
+  }
+
+  async determineDropdownId() {
+    this.log('info', '📍️ determineDropdownId starts')
+    let selector
+    // Regarding the accounts we have to develop this konnector,
+    // we could find different selectors for the years dropdown list
+    await Promise.race([
+      this.waitForElementInWorker('#time-filter'),
+      this.waitForElementInWorker('#orderFilter')
+    ])
+    if (await this.isElementInWorker('#time-filter')) {
+      selector = '#time-filter'
+    } else {
+      selector = '#orderFilter'
+    }
+    this.log('info', `determineDropdownId - selector : ${selector}`)
+    return selector
+  }
+
   async navigateToNextPeriod(period) {
-    this.log('info', 'navigateToNextPeriod starts')
-    await this.waitForElementInWorker('#time-filter')
+    this.log('info', '📍️ navigateToNextPeriod starts')
+    await this.waitForElementInWorker(`${timeFilterSelector}`)
     await waitFor(
       async () => {
-        await this.runInWorker('click', '#time-filter')
+        await this.runInWorker('click', `${timeFilterSelector}`)
         const listIsVisible = await this.isElementInWorker('ul[role="listbox"]')
         if (listIsVisible) return true
         return false
@@ -325,21 +394,21 @@ class AmazonContentScript extends ContentScript {
 
   // W
   async clickNextYear(period) {
-    this.log('info', 'clickNextYear starts')
+    this.log('info', '📍️ clickNextYear starts')
     document.querySelector(`a[data-value*="${period}"`).click()
   }
 
   // W
-  async getYears() {
-    this.log('info', 'getYears starts')
-    return Array.from(document.querySelectorAll('#time-filter option'))
+  async getYears(selector) {
+    this.log('info', '📍️ getYears starts')
+    return Array.from(document.querySelectorAll(`${selector} option`))
       .map(el => el.value)
       .filter(period => period.includes('year'))
   }
 
   // W
   async getNumberOfCommands() {
-    this.log('info', 'getNumberOfCommands starts')
+    this.log('info', '📍️ getNumberOfCommands starts')
     let numberOfCommands
     await waitFor(
       () => {
@@ -370,37 +439,7 @@ class AmazonContentScript extends ContentScript {
       'debug',
       `Fetching the list of orders for page ${infos.page} of period ${infos.period}`
     )
-    const { sourceAccountIdentifier, manifest } = infos.context
     let numberOfCards = await this.runInWorker('getNumberOfCardsPerPage')
-    if (!FORCE_FETCH_ALL) {
-      const existingBills = await this.queryAll(
-        Q('io.cozy.files')
-          .where({
-            'cozyMetadata.sourceAccountIdentifier': sourceAccountIdentifier,
-            'cozyMetadata.createdByApp': manifest.slug,
-            trashed: false
-          })
-          .indexFields([
-            'metadata.datetime',
-            'cozyMetadata.sourceAccountIdentifier',
-            'cozyMetadata.createdByApp'
-          ])
-          .sortBy([{ 'metadata.datetime': 'desc' }])
-      )
-      if (existingBills.length === 0) {
-        this.log(
-          'info',
-          'No files found in the cozy, fetching only the first page for current year'
-        )
-      } else {
-        const existingBill = existingBills?.[0]
-        const lastFetchedOrderDate = existingBill.attributes.metadata.datetime
-        numberOfCards = await this.runInWorker(
-          'getNumberOfNewOrders',
-          lastFetchedOrderDate
-        )
-      }
-    }
     for (let i = 0; i < numberOfCards; i++) {
       await waitFor(
         async () => {
@@ -435,7 +474,7 @@ class AmazonContentScript extends ContentScript {
 
   // P
   async getUserDataFromWebsite() {
-    this.log('info', 'Starting getUserDataFromWebsite')
+    this.log('info', '📍️ Starting getUserDataFromWebsite')
     if (this.store && this.store.email) {
       return {
         sourceAccountIdentifier: this.store.email
@@ -455,10 +494,8 @@ class AmazonContentScript extends ContentScript {
   }
 
   async fetchBills(numberOfCards) {
-    this.log('info', 'fetchBills starts')
-    let foundOrders = document.querySelectorAll(
-      'div.js-order-card:not(.a-spacing-base)'
-    )
+    this.log('info', '📍️ fetchBills starts')
+    let foundOrders = this.determineCardsToFetch()
     const numberOfOrders = numberOfCards
     let commandsToBills = []
     for (let i = 0; i < numberOfOrders; i++) {
@@ -490,9 +527,7 @@ class AmazonContentScript extends ContentScript {
 
   makeBillDownloadLinkVisible(number) {
     this.log('info', 'makeBillDownloadLinkVisible starts')
-    const orders = document.querySelectorAll(
-      'div.js-order-card:not(.a-spacing-base)'
-    )
+    const orders = this.determineCardsToFetch()
     this.clickBillButton(orders[number])
   }
 
@@ -512,7 +547,7 @@ class AmazonContentScript extends ContentScript {
   }
 
   computeCommands(order, orderNumber) {
-    this.log('info', 'computeCommands starts')
+    this.log('info', '📍️ computeCommands starts')
     const [foundCommandDate, foundCommandPrice, ,] =
       order.querySelectorAll('.value')
     const amount = foundCommandPrice.textContent.trim().substring(1)
@@ -617,33 +652,10 @@ class AmazonContentScript extends ContentScript {
   }
 
   getNumberOfCardsPerPage() {
-    this.log('info', 'getNumberOfCardsPerPage starts')
-    const numberOfCards = document.querySelectorAll(
-      'div.js-order-card:not(.a-spacing-base)'
-    ).length
+    this.log('info', '📍️ getNumberOfCardsPerPage starts')
+    const cardsToFetch = this.determineCardsToFetch()
+    const numberOfCards = cardsToFetch.length
     return numberOfCards
-  }
-
-  getNumberOfNewOrders(lastFetchedOrderDate) {
-    this.log('info', '📍️ getNumberOfNewOrders starts')
-    const newOrders = []
-    const pageOrders = document.querySelectorAll(
-      'div.js-order-card:not(.a-spacing-base)'
-    )
-    for (const order of pageOrders) {
-      const orderDateElement = order.querySelector('.value')
-      const commandDate = orderDateElement.textContent.trim()
-      const parsedDate = parse(commandDate, 'd MMMM yyyy', new Date(), {
-        locale: fr
-      })
-      if (new Date(parsedDate) > new Date(lastFetchedOrderDate)) {
-        this.log('info', 'Found a new order, adding it to the fetching list')
-        newOrders.push(parsedDate)
-        continue
-      }
-      this.log('info', 'This order has already been fetched, continue')
-    }
-    return newOrders.length
   }
 
   scrollToTop() {
@@ -652,14 +664,12 @@ class AmazonContentScript extends ContentScript {
   }
 
   async waitForOrdersLoading(numberOfOrders) {
-    this.log('info', 'waitForOrdersLoading starts')
+    this.log('info', '📍️ waitForOrdersLoading starts')
     let maxPerPage = 10
 
     await waitFor(
       () => {
-        let foundOrders = document.querySelectorAll(
-          'div.js-order-card:not(.a-spacing-base)'
-        )
+        let foundOrders = this.determineCardsToFetch()
         let foundOrdersLength = foundOrders.length
         if (
           !foundOrdersLength === numberOfOrders &&
@@ -699,12 +709,8 @@ class AmazonContentScript extends ContentScript {
     return true
   }
 
-  checkIfHasMorePage(fetchAll) {
-    this.log('info', 'checkIfHasMorePage starts')
-    if (!fetchAll) {
-      this.log('info', 'fetchAll is false, no need to scrap other pages')
-      return false
-    }
+  checkIfHasMorePage() {
+    this.log('info', '📍️ checkIfHasMorePage starts')
     const element = document.querySelector('.a-last')
     if (element) {
       const isEnabled = !element.classList.contains('a-disabled')
@@ -712,12 +718,25 @@ class AmazonContentScript extends ContentScript {
     }
     return false
   }
+
+  determineCardsToFetch() {
+    this.log('info', '📍️ determineCardsToFetch starts')
+    const jsOrderElements = document.querySelectorAll('.js-order-card > .order')
+    const ordersToFetch = []
+    for (const element of jsOrderElements) {
+      if (element.querySelector('.order-info')) {
+        ordersToFetch.push(element)
+      }
+    }
+    return ordersToFetch
+  }
 }
 
 const connector = new AmazonContentScript()
 connector
   .init({
     additionalExposedMethodsNames: [
+      'checkUserAgentReload',
       'getYears',
       'checkingBox',
       'setListenerLogin',
@@ -728,7 +747,6 @@ connector
       'fetchBills',
       'makeBillDownloadLinkVisible',
       'getNumberOfCardsPerPage',
-      'getNumberOfNewOrders',
       'scrollToTop',
       'waitForOrdersLoading',
       'checkIfHasMorePage'
