@@ -3,7 +3,6 @@ import { format, parse } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import Minilog from '@cozy/minilog'
 import waitFor, { TimeoutError } from 'p-wait-for'
-import { Q } from 'cozy-client/dist/queries/dsl'
 
 const log = Minilog('ContentScript')
 Minilog.enable()
@@ -214,9 +213,9 @@ class AmazonContentScript extends ContentScript {
     const distanceInDays = getDateDistanceInDays(
       trigger.current_state?.last_execution
     )
-    if (distanceInDays >= 30 || !hasLastExecution || isLastJobError) {
+    this.log('debug', `distanceInDays: ${distanceInDays}`)
+    if (distanceInDays >= 90 || !hasLastExecution || isLastJobError) {
       this.log('debug', `isLastJobError: ${isLastJobError}`)
-      this.log('debug', `distanceInDays: ${distanceInDays}`)
       this.log('debug', `hasLastExecution: ${hasLastExecution}`)
       FORCE_FETCH_ALL = true
     }
@@ -231,14 +230,29 @@ class AmazonContentScript extends ContentScript {
     await this.waitForElementInWorker('#nav_prefetch_yourorders')
     await this.runInWorker('click', '#nav_prefetch_yourorders')
     timeFilterSelector = await this.determineDropdownId()
-    const years = await this.runInWorker('getYears', timeFilterSelector)
-    this.log('debug', 'Years :' + years)
+    let years = await this.runInWorker('getYears', timeFilterSelector)
     if (!FORCE_FETCH_ALL) {
-      // If false, we just need the first year of bills
-      years.length = 1
+      // If false, we just need the last period depending on the distanceInDays value
+      if (distanceInDays <= 30) {
+        this.log(
+          'info',
+          'lastExecution under or equals 30 days, fetching the last 30 days period'
+        )
+        years = ['last30']
+      }
+      if (distanceInDays > 30 && distanceInDays < 90) {
+        this.log(
+          'info',
+          'lastExecution between 30 and 90 days, fetching the last 3 months period'
+        )
+        years = ['months-3']
+      }
     }
-    await this.runInWorker('deleteElement', '.num-orders')
-    await this.navigateToNextPeriod(years[0])
+    if (years[0] !== 'months-3') {
+      await this.runInWorker('deleteElement', '.num-orders')
+      await this.navigateToNextPeriod(years[0])
+    }
+    this.log('debug', 'Years :' + years)
     for (let i = 0; i < years.length; i++) {
       this.log('debug', 'Saving year ' + years[i])
       timeFilterSelector = await this.determineDropdownId()
@@ -292,10 +306,7 @@ class AmazonContentScript extends ContentScript {
           contentType: 'application/pdf',
           qualificationLabel: 'other_invoice'
         })
-        hasMorePage = await this.runInWorker(
-          'checkIfHasMorePage',
-          FORCE_FETCH_ALL
-        )
+        hasMorePage = await this.runInWorker('checkIfHasMorePage')
         if (hasMorePage) {
           this.log('info', 'One more page detected, proceeding')
           await this.runInWorker('click', '.a-last > a')
@@ -428,37 +439,7 @@ class AmazonContentScript extends ContentScript {
       'debug',
       `Fetching the list of orders for page ${infos.page} of period ${infos.period}`
     )
-    const { sourceAccountIdentifier, manifest } = infos.context
     let numberOfCards = await this.runInWorker('getNumberOfCardsPerPage')
-    if (!FORCE_FETCH_ALL) {
-      const existingBills = await this.queryAll(
-        Q('io.cozy.files')
-          .where({
-            'cozyMetadata.sourceAccountIdentifier': sourceAccountIdentifier,
-            'cozyMetadata.createdByApp': manifest.slug,
-            trashed: false
-          })
-          .indexFields([
-            'metadata.datetime',
-            'cozyMetadata.sourceAccountIdentifier',
-            'cozyMetadata.createdByApp'
-          ])
-          .sortBy([{ 'metadata.datetime': 'desc' }])
-      )
-      if (existingBills.length === 0) {
-        this.log(
-          'info',
-          'No files found in the cozy, fetching only the first page for current year'
-        )
-      } else {
-        const existingBill = existingBills?.[0]
-        const lastFetchedOrderDate = existingBill.attributes.metadata.datetime
-        numberOfCards = await this.runInWorker(
-          'getNumberOfNewOrders',
-          lastFetchedOrderDate
-        )
-      }
-    }
     for (let i = 0; i < numberOfCards; i++) {
       await waitFor(
         async () => {
@@ -677,26 +658,6 @@ class AmazonContentScript extends ContentScript {
     return numberOfCards
   }
 
-  getNumberOfNewOrders(lastFetchedOrderDate) {
-    this.log('info', '📍️ getNumberOfNewOrders starts')
-    const newOrders = []
-    const pageOrders = this.determineCardsToFetch()
-    for (const order of pageOrders) {
-      const orderDateElement = order.querySelector('.value')
-      const commandDate = orderDateElement.textContent.trim()
-      const parsedDate = parse(commandDate, 'd MMMM yyyy', new Date(), {
-        locale: fr
-      })
-      if (new Date(parsedDate) > new Date(lastFetchedOrderDate)) {
-        this.log('info', 'Found a new order, adding it to the fetching list')
-        newOrders.push(parsedDate)
-        continue
-      }
-      this.log('info', 'This order has already been fetched, continue')
-    }
-    return newOrders.length
-  }
-
   scrollToTop() {
     this.log('info', 'scrollToTop starts')
     window.scrollTo({ top: 0, behavior: 'instant' })
@@ -748,12 +709,8 @@ class AmazonContentScript extends ContentScript {
     return true
   }
 
-  checkIfHasMorePage(fetchAll) {
+  checkIfHasMorePage() {
     this.log('info', '📍️ checkIfHasMorePage starts')
-    if (!fetchAll) {
-      this.log('info', 'fetchAll is false, no need to scrap other pages')
-      return false
-    }
     const element = document.querySelector('.a-last')
     if (element) {
       const isEnabled = !element.classList.contains('a-disabled')
@@ -790,7 +747,6 @@ connector
       'fetchBills',
       'makeBillDownloadLinkVisible',
       'getNumberOfCardsPerPage',
-      'getNumberOfNewOrders',
       'scrollToTop',
       'waitForOrdersLoading',
       'checkIfHasMorePage'
