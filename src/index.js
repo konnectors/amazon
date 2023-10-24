@@ -230,7 +230,7 @@ class AmazonContentScript extends ContentScript {
     await this.waitForElementInWorker('#nav_prefetch_yourorders')
     await this.runInWorker('click', '#nav_prefetch_yourorders')
     timeFilterSelector = await this.determineDropdownId()
-    const years = await this.runInWorker('getYears', timeFilterSelector)
+    let years = await this.runInWorker('getYears', timeFilterSelector)
     if (!FORCE_FETCH_ALL) {
       // If false, we just need the last period depending on the distanceInDays value
       if (distanceInDays <= 30) {
@@ -238,16 +238,14 @@ class AmazonContentScript extends ContentScript {
           'info',
           'lastExecution under or equals 30 days, fetching the last 30 days period'
         )
-        years.length = 1
-        years[0] = 'last30'
+        years = ['last30']
       }
       if (distanceInDays > 30 && distanceInDays < 90) {
         this.log(
           'info',
           'lastExecution between 30 and 90 days, fetching the last 3 months period'
         )
-        years.length = 1
-        years[0] = 'months-3'
+        years = ['months-3']
       }
     }
     if (years[0] !== 'months-3') {
