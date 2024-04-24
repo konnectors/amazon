@@ -204,21 +204,7 @@ class AmazonContentScript extends ContentScript {
   // P
   async fetch(context) {
     this.log('info', '📍️ Starting fetch')
-    const { trigger } = context
-    // force fetch all data (the long way) when last trigger execution is older than 30 days
-    // or when the last job was an error
-    const isLastJobError =
-      trigger.current_state?.last_failure > trigger.current_state?.last_success
-    const hasLastExecution = Boolean(trigger.current_state?.last_execution)
-    const distanceInDays = getDateDistanceInDays(
-      trigger.current_state?.last_execution
-    )
-    this.log('debug', `distanceInDays: ${distanceInDays}`)
-    if (distanceInDays >= 90 || !hasLastExecution || isLastJobError) {
-      this.log('debug', `isLastJobError: ${isLastJobError}`)
-      this.log('debug', `hasLastExecution: ${hasLastExecution}`)
-      FORCE_FETCH_ALL = true
-    }
+    const distanceInDays = await this.handleContextInfos(context)
     if (this.store?.email && this.store?.password) {
       this.log('info', 'Saving credentials...')
       const userCredentials = {
@@ -332,6 +318,35 @@ class AmazonContentScript extends ContentScript {
       await this.runInWorker('scrollToTop')
       await this.navigateToNextPeriod(years[i + 1])
     }
+  }
+
+  async handleContextInfos(context) {
+    this.log('info', '📍️ handleContextInfos starts')
+    const { trigger } = context
+    this.log('info', `trigger : ${JSON.stringify(trigger)}`)
+    const isFirstJob =
+      !trigger.current_state?.last_failure &&
+      !trigger.current_state?.last_success
+
+    const isLastJobError =
+      !isFirstJob &&
+      trigger.current_state?.last_failure ===
+        trigger.current_state?.last_execution
+
+    const hasLastExecution = Boolean(trigger.current_state?.last_execution)
+    const distanceInDays = getDateDistanceInDays(
+      trigger.current_state?.last_execution
+    )
+    this.log('debug', `distanceInDays: ${distanceInDays}`)
+    if (distanceInDays >= 90 || !hasLastExecution || isLastJobError) {
+      this.log('info', '🐢️ Long execution')
+      this.log('debug', `isLastJobError: ${isLastJobError}`)
+      this.log('debug', `hasLastExecution: ${hasLastExecution}`)
+      FORCE_FETCH_ALL = true
+    } else {
+      this.log('info', '🐇️ Quick execution')
+    }
+    return distanceInDays
   }
 
   async checkUserAgentReload() {
