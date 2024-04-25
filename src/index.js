@@ -236,6 +236,9 @@ class AmazonContentScript extends ContentScript {
     }
     if (years[0] !== 'months-3') {
       await this.runInWorker('deleteElement', '.num-orders')
+      // ///////////// USED TO DEBUG A SPECIFIC YEAR /////
+      // years = ['year-2022']
+      // /////////////////////////////////////////////////
       await this.navigateToNextPeriod(years[0])
     }
     this.log('debug', 'Years :' + years)
@@ -323,7 +326,6 @@ class AmazonContentScript extends ContentScript {
   async handleContextInfos(context) {
     this.log('info', '📍️ handleContextInfos starts')
     const { trigger } = context
-    this.log('info', `trigger : ${JSON.stringify(trigger)}`)
     const isFirstJob =
       !trigger.current_state?.last_failure &&
       !trigger.current_state?.last_success
@@ -455,14 +457,29 @@ class AmazonContentScript extends ContentScript {
       `Fetching the list of orders for page ${infos.page} of period ${infos.period}`
     )
     let numberOfCards = await this.runInWorker('getNumberOfCardsPerPage')
+    let wantedId = 1
     for (let i = 0; i < numberOfCards; i++) {
       await waitFor(
         async () => {
-          await this.runInWorker('makeBillDownloadLinkVisible', i)
-          const isOk = await this.isElementInWorker(
-            `#a-popover-content-${i + 1} > ul > li > span > .a-link-normal`
-          )
-          return isOk
+          const hasLink = await this.runInWorker('checkOrderDownloadLink', i)
+          if (hasLink) {
+            await this.runInWorker('makeBillDownloadLinkVisible', i)
+            const isOk = await this.isElementInWorker(
+              `#a-popover-content-${wantedId} > ul > li > span > .a-link-normal`
+            )
+            let message
+            if (isOk) {
+              message = `🦜️ Link ${wantedId} visible, continue to next loop`
+              wantedId++
+            } else {
+              message = `🏮️ Link ${wantedId} not visible, retrying`
+            }
+            this.log('info', message)
+            return isOk
+          } else {
+            this.log('info', 'This order has no links to click, continue')
+            return true
+          }
         },
         {
           interval: 1000,
@@ -474,7 +491,7 @@ class AmazonContentScript extends ContentScript {
           }
         }
       )
-      this.log('info', 'element visible, continue')
+      this.log('info', 'element ok, continue')
     }
     const pageBills = await this.runInWorker('fetchBills', numberOfCards)
     return pageBills
@@ -485,6 +502,19 @@ class AmazonContentScript extends ContentScript {
     // To avoid problems when checking or waiting for a specific element between page changes
     // we remove the element from the html so it's not present anymore and come back with any new page or reload.
     document.querySelector(element).remove()
+  }
+
+  async checkOrderDownloadLink(number) {
+    this.log('info', '📍️ checkOrderDownloadLink starts')
+    const orders = this.determineCardsToFetch()
+    const order = orders[number]
+    const orderLinks = order.querySelectorAll('.a-popover-trigger')
+    if (orderLinks.length === 0) {
+      this.log('info', 'No links found for this order')
+      return false
+    } else {
+      return true
+    }
   }
 
   // P
@@ -513,12 +543,18 @@ class AmazonContentScript extends ContentScript {
     let foundOrders = this.determineCardsToFetch()
     const numberOfOrders = numberOfCards
     let commandsToBills = []
+    let wantedId = 1
     for (let i = 0; i < numberOfOrders; i++) {
-      const commands = await this.computeCommands(foundOrders[i], i)
+      const commands = await this.computeCommands(foundOrders[i], wantedId)
       if (commands === null) {
         continue
       }
+      if (commands === 'audiobook') {
+        wantedId++
+        continue
+      }
       if (Array.isArray(commands.fileurl)) {
+        this.log('debug', 'fileurl is an Array, splitting bill')
         let billNumber = 1
         for (const url of commands.fileurl) {
           const oneBill = {
@@ -533,8 +569,10 @@ class AmazonContentScript extends ContentScript {
           commandsToBills.push(oneBill)
           billNumber++
         }
+        wantedId++
       } else {
         commandsToBills.push(commands)
+        wantedId++
       }
     }
     return commandsToBills
@@ -548,7 +586,8 @@ class AmazonContentScript extends ContentScript {
 
   clickBillButton(order) {
     this.log('info', 'clickBillButton starts')
-    order.querySelectorAll('.a-popover-trigger').forEach(popover => {
+    const orderLinks = order.querySelectorAll('.a-popover-trigger')
+    orderLinks.forEach(popover => {
       if (popover.textContent.includes('Facture')) {
         popover.click()
       } else {
@@ -561,14 +600,14 @@ class AmazonContentScript extends ContentScript {
     })
   }
 
-  computeCommands(order, orderNumber) {
+  computeCommands(order, wantedId) {
     this.log('info', '📍️ computeCommands starts')
     const [foundCommandDate, foundCommandPrice, ,] =
       order.querySelectorAll('.value')
     const amount = foundCommandPrice.textContent.trim().substring(1)
     if (amount.match(/crédit(s)? audio/g)) {
       this.log('info', 'Found an audiobook, jumping this bill')
-      return null
+      return 'audiobook'
     }
     if (amount === '0,00') {
       this.log(
@@ -599,26 +638,11 @@ class AmazonContentScript extends ContentScript {
       billProducts.push(article)
     }
     const foundUrls = document.querySelectorAll(
-      `#a-popover-content-${
-        orderNumber + 1
-      } > ul > li > span > a[href*="invoice.pdf"]`
-      // Selector for the "récépissé", for later.
-      // , #a-popover-content-${
-      //   orderNumber + 1
-      // } > ul > li > span > a[href*="/generated_invoices"]`
+      `#a-popover-content-${wantedId} > ul > li > span > a[href*="invoice.pdf"]`
     )
     let urlsArray = []
     for (const singleUrl of foundUrls) {
       const href = singleUrl.getAttribute('href')
-      // This code is used to get the "récépissé" file you can download in place of a bill sometimes
-      // The connector gets a CORS error when trying to download this kind of file. No requestOptions seems to appears
-      // when given to the file, so we just keep this code around for later investigations.
-      // if (href.includes('https://s3.amazonaws.com/generated_invoices')) {
-      //   // this.log('info', 'This is not a bill, skiping it')
-      //   this.log('info', `HREF FROM RECEPISSE : ${href}`)
-      //   urlsArray.push(href)
-      //   continue
-      // }
       urlsArray.push(baseUrl + href)
     }
     if (urlsArray.length === 0) {
@@ -698,7 +722,7 @@ class AmazonContentScript extends ContentScript {
               'div[class*="a-fixed-left-grid a-spacing-"]'
             )
             for (const info of foundOrderInfos) {
-              const isFullfilled = Boolean(info.innerText.length > 10)
+              const isFullfilled = Boolean(info.innerText.length > 0)
               if (!isFullfilled) {
                 this.log(
                   'info',
@@ -764,7 +788,8 @@ connector
       'getNumberOfCardsPerPage',
       'scrollToTop',
       'waitForOrdersLoading',
-      'checkIfHasMorePage'
+      'checkIfHasMorePage',
+      'checkOrderDownloadLink'
     ]
   })
   .catch(err => {
