@@ -473,6 +473,21 @@ class AmazonContentScript extends ContentScript {
               wantedId++
             } else {
               message = `🏮️ Link ${wantedId} not visible, retrying`
+              await this.evaluateInWorker(() => {
+                const popoverDisplaysAlert = document
+                  .querySelector(`#a-popover-${wantedId}`)
+                  .querySelector('.a-icon-alert')
+                // If website did not manage to load the downloadLinks it shows an error in the popover
+                // If it happens, close and click again on the link usually resolve the issue.
+                // To do so, just click outside the popover on any element (here I choose the white background), this will close the popover
+                if (popoverDisplaysAlert) {
+                  this.log(
+                    'info',
+                    'Website generate an error when trying to show downloadLinks, retrying ...'
+                  )
+                  document.querySelector('#a-page').click()
+                }
+              })
             }
             this.log('info', message)
             return isOk
