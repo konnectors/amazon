@@ -237,7 +237,7 @@ class AmazonContentScript extends ContentScript {
     if (years[0] !== 'months-3') {
       await this.runInWorker('deleteElement', '.num-orders')
       // ///////////// USED TO DEBUG A SPECIFIC YEAR /////
-      // years = ['year-2022']
+      // years = ['year-2020']
       // /////////////////////////////////////////////////
       await this.navigateToNextPeriod(years[0])
     }
@@ -473,6 +473,21 @@ class AmazonContentScript extends ContentScript {
               wantedId++
             } else {
               message = `🏮️ Link ${wantedId} not visible, retrying`
+              await this.evaluateInWorker(() => {
+                const popoverDisplaysAlert = document
+                  .querySelector(`#a-popover-${wantedId}`)
+                  .querySelector('.a-icon-alert')
+                // If website did not manage to load the downloadLinks it shows an error in the popover
+                // If it happens, close and click again on the link usually resolve the issue.
+                // To do so, just click outside the popover on any element (here I choose the white background), this will close the popover
+                if (popoverDisplaysAlert) {
+                  this.log(
+                    'info',
+                    'Website generate an error when trying to show downloadLinks, retrying ...'
+                  )
+                  document.querySelector('#a-page').click()
+                }
+              })
             }
             this.log('info', message)
             return isOk
@@ -549,7 +564,7 @@ class AmazonContentScript extends ContentScript {
       if (commands === null) {
         continue
       }
-      if (commands === 'audiobook') {
+      if (commands === 'audiobook' || commands === 'noBill') {
         wantedId++
         continue
       }
@@ -650,7 +665,7 @@ class AmazonContentScript extends ContentScript {
         'info',
         'Found an article with no bill attached to it, jumping this bill'
       )
-      return null
+      return 'noBill'
     }
     const fileurl = urlsArray.length > 1 ? urlsArray : urlsArray[0]
     let command = {
