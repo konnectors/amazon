@@ -11,7 +11,7 @@
     "cheerio": "1.0.0-rc.12",
     "cozy-clisk": "^0.38.2",
     "date-fns": "2.30.0",
-    "p-wait-for": "5.0.2"
+    "p-wait-for": "6.0.0"
   },
   "eslintConfig": {
     "extends": [
